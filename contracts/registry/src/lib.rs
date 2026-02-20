@@ -1,119 +1,59 @@
 #![no_std]
-use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env};
 
-// ---------------------------------------------------------------------------
-// Storage keys
-// ---------------------------------------------------------------------------
+use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, String};
 
+#[derive(Clone)]
+#[contracttype]
+pub struct Profile {
+    pub role: u32,
+    pub metadata_hash: String,
+    pub is_verified: bool,
+}
+
+#[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
-    UserProfile(Address),
+    Profile(Address),
 }
-
-// ---------------------------------------------------------------------------
-// Domain types
-// ---------------------------------------------------------------------------
-
-#[contracttype]
-#[derive(Clone, PartialEq)]
-pub enum Role {
-    User,
-    Curator,
-    Admin,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct UserProfile {
-    pub address: Address,
-    pub role: Role,
-    pub is_blacklisted: bool,
-}
-
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
 
 #[contractevent]
-pub struct UserBlacklisted {
-    pub target_user: Address,
+pub struct ProfileUpdated {
+    #[topic]
+    pub user: Address,
+    pub metadata_hash: String,
 }
 
-// ---------------------------------------------------------------------------
-// Contract
-// ---------------------------------------------------------------------------
-
 #[contract]
-pub struct RegistryContract;
+pub struct Registry;
+
+fn read_profile(env: &Env, user: &Address) -> Option<Profile> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Profile(user.clone()))
+}
+
+fn write_profile(env: &Env, user: &Address, profile: &Profile) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Profile(user.clone()), profile);
+}
 
 #[contractimpl]
-impl RegistryContract {
-    /// Register a user profile. Stores the profile in persistent storage.
-    /// In production this would be protected; here it is open for bootstrapping.
-    pub fn register_user(env: Env, user: Address, role: Role) {
+impl Registry {
+    pub fn update_profile_metadata(env: Env, user: Address, new_metadata_hash: String) {
         user.require_auth();
-        let profile = UserProfile {
-            address: user.clone(),
-            role,
-            is_blacklisted: false,
+
+        let mut profile = match read_profile(&env, &user) {
+            Some(p) => p,
+            None => panic!("User not registered"),
         };
-        env.storage()
-            .persistent()
-            .set(&DataKey::UserProfile(user), &profile);
-    }
 
-    /// Blacklist a user. Caller must be a Curator or Admin.
-    ///
-    /// 1. Require auth from caller.
-    /// 2. Load caller profile — assert role is Curator or Admin.
-    /// 3. Load target profile — panic if not found.
-    /// 4. Set `is_blacklisted = true`.
-    /// 5. Save updated profile to persistent storage.
-    /// 6. Emit `UserBlacklisted` event.
-    pub fn blacklist_user(env: Env, caller: Address, target_user: Address) {
-        // 1. Require auth from the caller
-        caller.require_auth();
-
-        // 2. Load caller profile and verify role
-        let caller_profile: UserProfile = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserProfile(caller.clone()))
-            .expect("Caller profile not found");
-
-        if caller_profile.role != Role::Curator && caller_profile.role != Role::Admin {
-            panic!("Unauthorized: caller must be Curator or Admin");
-        }
-
-        // 3. Load target profile — panic if not found
-        let mut target_profile: UserProfile = env
-            .storage()
-            .persistent()
-            .get(&DataKey::UserProfile(target_user.clone()))
-            .expect("Target user profile not found");
-
-        // 4. Set is_blacklisted = true
-        target_profile.is_blacklisted = true;
-
-        // 5. Save updated profile
-        env.storage()
-            .persistent()
-            .set(&DataKey::UserProfile(target_user.clone()), &target_profile);
-
-        // 6. Emit UserBlacklisted event
-        UserBlacklisted {
-            target_user: target_user.clone(),
+        profile.metadata_hash = new_metadata_hash.clone();
+        write_profile(&env, &user, &profile);
+        ProfileUpdated {
+            user,
+            metadata_hash: new_metadata_hash,
         }
         .publish(&env);
     }
-
-    /// Returns the profile for the given address.
-    pub fn get_profile(env: Env, user: Address) -> UserProfile {
-        env.storage()
-            .persistent()
-            .get(&DataKey::UserProfile(user))
-            .expect("Profile not found")
-    }
 }
-
-mod test;
