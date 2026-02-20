@@ -40,7 +40,7 @@ impl MarketContract {
 
         // 2. Transfer token from finder to this contract
         let token_client = token::TokenClient::new(&env, &token);
-        token_client.transfer(&finder, &env.current_contract_address(), &amount);
+        token_client.transfer(&finder, env.current_contract_address(), &amount);
 
         // 3. Get and increment job counter
         let counter: u64 = env

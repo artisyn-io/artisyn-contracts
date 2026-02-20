@@ -76,10 +76,8 @@ fn test_create_job_emits_event() {
     )
     .into_val(&env);
 
-    let expected: soroban_sdk::Vec<(Address, soroban_sdk::Vec<Val>, Val)> = vec![
-        &env,
-        (contract_id.clone(), expected_topics, expected_data),
-    ];
+    let expected: soroban_sdk::Vec<(Address, soroban_sdk::Vec<Val>, Val)> =
+        vec![&env, (contract_id.clone(), expected_topics, expected_data)];
     assert_eq!(vec![&env, all_events.get(1).unwrap()], expected);
 }
 
