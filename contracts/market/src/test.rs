@@ -20,7 +20,7 @@ fn test_create_job_transfers_funds_and_returns_id() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(MarketContract, ());
+    let contract_id = env.register(MarketContract, ());
     let client = MarketContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -49,7 +49,7 @@ fn test_create_job_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(MarketContract, ());
+    let contract_id = env.register(MarketContract, ());
     let client = MarketContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -86,7 +86,7 @@ fn test_create_job_incremental_ids() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(MarketContract, ());
+    let contract_id = env.register(MarketContract, ());
     let client = MarketContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
