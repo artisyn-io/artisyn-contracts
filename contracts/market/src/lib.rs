@@ -2,25 +2,35 @@
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
 
 #[contracttype]
-pub enum DataKey {
-    JobCounter,
-    Job(u64),
-}
-
-#[contracttype]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JobStatus {
     Open,
+    Assigned,
+    InProgress,
+    PendingReview,
+    Completed,
+    Disputed,
+    Cancelled,
 }
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Job {
     pub id: u64,
     pub finder: Address,
+    pub artisan: Option<Address>,
     pub token: Address,
     pub amount: i128,
     pub status: JobStatus,
+    pub start_time: u64,
+    pub end_time: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    Job(u64),
+    JobCounter,
 }
 
 #[contractevent]
@@ -40,7 +50,7 @@ impl MarketContract {
 
         // 2. Transfer token from finder to this contract
         let token_client = token::TokenClient::new(&env, &token);
-        token_client.transfer(&finder, &env.current_contract_address(), &amount);
+        token_client.transfer(&finder, env.current_contract_address(), &amount);
 
         // 3. Get and increment job counter
         let counter: u64 = env
@@ -55,9 +65,12 @@ impl MarketContract {
         let job = Job {
             id,
             finder,
+            artisan: None,
             token,
             amount,
             status: JobStatus::Open,
+            start_time: 0, // Set to 0, will be updated when an artisan starts the job
+            end_time: 0,   // Set to 0, will be updated when the job is completed
         };
         env.storage().persistent().set(&DataKey::Job(id), &job);
 
