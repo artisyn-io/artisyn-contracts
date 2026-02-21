@@ -1,112 +1,198 @@
 #![no_std]
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String};
 
-use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, String};
-
-#[derive(Clone, Debug, PartialEq)]
-#[contracttype]
-pub enum UserRole {
-    User,
-    Curator,
+/// Error codes for the Registry contract
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum RegistryError {
+    /// User not found in registry
+    UserNotFound = 1,
+    /// User already exists
+    UserAlreadyExists = 2,
 }
 
-#[derive(Clone)]
+/// User profile data structure
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserProfile {
-    pub role: UserRole,
-    pub metadata_hash: String,
-    pub is_verified: bool,
+    /// User's role in the system
+    pub role: String,
+    /// Verification status (true if verified, false otherwise)
+    pub verified: bool,
+    /// User's badge or tier level
+    pub badge: String,
 }
 
-#[derive(Clone)]
+/// Storage keys for the contract
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
-    Admin,
+    /// Key for storing user profiles
     User(Address),
 }
 
-#[contractevent]
-pub struct ProfileUpdated {
-    #[topic]
-    pub user: Address,
-    pub metadata_hash: String,
-}
-
 #[contract]
-pub struct Registry;
-
-fn read_profile(env: &Env, user: &Address) -> Option<UserProfile> {
-    env.storage().persistent().get(&DataKey::User(user.clone()))
-}
-
-fn write_profile(env: &Env, user: &Address, profile: &UserProfile) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::User(user.clone()), profile);
-}
+pub struct RegistryContract;
 
 #[contractimpl]
-impl Registry {
-    /// Initialize the registry with the Admin address. Must be called once at deploy.
-    pub fn init(env: Env, admin: Address) {
-        env.storage().instance().set(&DataKey::Admin, &admin);
-    }
-
-    /// Register a user (self-registration). Creates a profile with User role.
-    pub fn register_user(env: Env, user: Address) {
+impl RegistryContract {
+    /// Registers a new user profile in the registry
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `user` - The address of the user to register
+    /// * `role` - The user's role
+    /// * `verified` - Verification status
+    /// * `badge` - The user's badge
+    ///
+    /// # Returns
+    /// * `Result<(), RegistryError>` - Ok if successful, UserAlreadyExists error if user exists
+    pub fn register_user(
+        env: Env,
+        user: Address,
+        role: String,
+        verified: bool,
+        badge: String,
+    ) -> Result<(), RegistryError> {
+        // Require authentication from the user being registered
         user.require_auth();
-        if read_profile(&env, &user).is_some() {
-            panic!("User already registered");
+
+        // Construct the storage key
+        let key = DataKey::User(user.clone());
+
+        // Check if user already exists
+        if env.storage().persistent().has(&key) {
+            return Err(RegistryError::UserAlreadyExists);
         }
+
+        // Create the user profile
         let profile = UserProfile {
-            role: UserRole::User,
-            metadata_hash: String::from_str(&env, ""),
-            is_verified: false,
+            role,
+            verified,
+            badge,
         };
-        write_profile(&env, &user, &profile);
+
+        // Store the profile in persistent storage
+        env.storage().persistent().set(&key, &profile);
+
+        Ok(())
     }
 
-    /// Promote a trusted user to Curator. Only the Admin can call this.
-    pub fn add_curator(env: Env, new_curator: Address) {
-        let admin = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::Admin)
-            .unwrap_or_else(|| panic!("Contract not initialized"));
+    /// Retrieves a user's profile from the registry (View Function)
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `user` - The address of the user to retrieve
+    ///
+    /// # Returns
+    /// * `Result<UserProfile, RegistryError>` - The user profile if found, UserNotFound error otherwise
+    pub fn get_profile(env: Env, user: Address) -> Result<UserProfile, RegistryError> {
+        // 1. Construct DataKey::User(user_address)
+        let key = DataKey::User(user);
 
-        admin.require_auth();
+        // 2. Call env.storage().persistent().get(&key)
+        let profile: Option<UserProfile> = env.storage().persistent().get(&key);
 
+        // 3. Unwrap result (or return error if None)
+        match profile {
+            Some(profile) => Ok(profile),
+            None => Err(RegistryError::UserNotFound),
+        }
+    }
+
+    /// Updates verification status for an existing user
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `user` - The address of the user to update
+    /// * `verified` - New verification status
+    ///
+    /// # Returns
+    /// * `Result<(), RegistryError>` - Ok if successful, UserNotFound if user doesn't exist
+    pub fn update_verification(
+        env: Env,
+        user: Address,
+        verified: bool,
+    ) -> Result<(), RegistryError> {
+        // Require authentication from the user
+        user.require_auth();
+
+        // Get the existing profile
+        let key = DataKey::User(user.clone());
         let mut profile: UserProfile = env
             .storage()
             .persistent()
-            .get(&DataKey::User(new_curator.clone()))
-            .unwrap_or_else(|| panic!("User not found"));
+            .get(&key)
+            .ok_or(RegistryError::UserNotFound)?;
 
-        profile.role = UserRole::Curator;
-        env.storage()
-            .persistent()
-            .set(&DataKey::User(new_curator), &profile);
+        // Update verification status
+        profile.verified = verified;
+
+        // Save the updated profile
+        env.storage().persistent().set(&key, &profile);
+
+        Ok(())
     }
 
-    /// Return the profile for a user, or panic if not found.
-    pub fn get_profile(env: Env, user: Address) -> UserProfile {
-        read_profile(&env, &user).unwrap_or_else(|| panic!("User not found"))
-    }
-
-    pub fn update_profile_metadata(env: Env, user: Address, new_metadata_hash: String) {
+    /// Updates the role for an existing user
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `user` - The address of the user to update
+    /// * `role` - New role
+    ///
+    /// # Returns
+    /// * `Result<(), RegistryError>` - Ok if successful, UserNotFound if user doesn't exist
+    pub fn update_role(env: Env, user: Address, role: String) -> Result<(), RegistryError> {
+        // Require authentication from the user
         user.require_auth();
 
-        let mut profile = match read_profile(&env, &user) {
-            Some(p) => p,
-            None => panic!("User not registered"),
-        };
+        // Get the existing profile
+        let key = DataKey::User(user.clone());
+        let mut profile: UserProfile = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RegistryError::UserNotFound)?;
 
-        profile.metadata_hash = new_metadata_hash.clone();
-        write_profile(&env, &user, &profile);
-        ProfileUpdated {
-            user,
-            metadata_hash: new_metadata_hash,
-        }
-        .publish(&env);
+        // Update role
+        profile.role = role;
+
+        // Save the updated profile
+        env.storage().persistent().set(&key, &profile);
+
+        Ok(())
+    }
+
+    /// Updates the badge for an existing user
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `user` - The address of the user to update
+    /// * `badge` - New badge
+    ///
+    /// # Returns
+    /// * `Result<(), RegistryError>` - Ok if successful, UserNotFound if user doesn't exist
+    pub fn update_badge(env: Env, user: Address, badge: String) -> Result<(), RegistryError> {
+        // Require authentication from the user
+        user.require_auth();
+
+        // Get the existing profile
+        let key = DataKey::User(user.clone());
+        let mut profile: UserProfile = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RegistryError::UserNotFound)?;
+
+        // Update badge
+        profile.badge = badge;
+
+        // Save the updated profile
+        env.storage().persistent().set(&key, &profile);
+
+        Ok(())
     }
 }
 
