@@ -1,6 +1,8 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, String, Symbol};
+use soroban_sdk::{
+    contract, contractevent, contractimpl, contracttype, Address, Env, String, Symbol,
+};
 
 // --- Types ---
 
