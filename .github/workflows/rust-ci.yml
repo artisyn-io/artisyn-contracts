@@ -34,12 +34,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Build registry WASM (required for market contract)
+        run: cargo build --target wasm32-unknown-unknown --release --package registry
+
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run tests
         run: cargo test
 
-      - name: Build Wasm artifacts
+      - name: Build all Wasm artifacts
         run: cargo build --target wasm32-unknown-unknown --release
-
