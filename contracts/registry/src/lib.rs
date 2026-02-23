@@ -6,6 +6,7 @@ use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, 
 pub const ROLE_FINDER: u32 = 0;
 pub const ROLE_CURATOR: u32 = 1;
 pub const ROLE_ADMIN: u32 = 2;
+pub const ROLE_ARTISAN: u32 = 3;
 
 #[derive(Clone)]
 #[contracttype]
@@ -33,6 +34,12 @@ pub struct ProfileUpdated {
 pub struct CuratorRemoved {
     #[topic]
     pub curator: Address,
+}
+
+#[contractevent]
+pub struct UserVerified {
+    #[topic]
+    pub artisan: Address,
 }
 
 #[contract]
@@ -147,4 +154,43 @@ impl Registry {
     pub fn get_admin(env: Env) -> Address {
         read_admin(&env).expect("Contract not initialized")
     }
+
+    /// Approve a Finder to become an Artisan (curator/admin-gated).
+    ///
+    /// # Panics
+    /// - If the contract has not been initialized (no admin set)
+    /// - If the caller is not a Curator or Admin
+    /// - If `artisan` has no registered profile
+    pub fn approve_artisan(env: Env, caller: Address, artisan: Address) {
+        // 1. Require authentication from caller
+        caller.require_auth();
+
+        // 2. Verify caller has Curator or Admin privileges
+        let caller_profile = match read_profile(&env, &caller) {
+            Some(p) => p,
+            None => panic!("Caller not registered"),
+        };
+
+        if caller_profile.role != ROLE_CURATOR && caller_profile.role != ROLE_ADMIN {
+            panic!("Caller must be Curator or Admin");
+        }
+
+        // 3. Retrieve target user's profile
+        let mut artisan_profile = match read_profile(&env, &artisan) {
+            Some(p) => p,
+            None => panic!("User not found"),
+        };
+
+        // 4. Update role to Artisan
+        artisan_profile.role = ROLE_ARTISAN;
+
+        // 5. Save updated profile
+        write_profile(&env, &artisan, &artisan_profile);
+
+        // 6. Emit UserVerified event
+        UserVerified { artisan }.publish(&env);
+    }
 }
+
+#[cfg(test)]
+mod test;
