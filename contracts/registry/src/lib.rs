@@ -1,14 +1,9 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, Address, Env, String, Symbol,
+    contract, contractimpl, contracttype,
+    Env, Address, String, Symbol,
 };
-
-// --- Types ---
-
-pub const ROLE_FINDER: u32 = 0;
-pub const ROLE_CURATOR: u32 = 1;
-pub const ROLE_ADMIN: u32 = 2;
 
 #[contracttype]
 #[derive(Clone, PartialEq)]
@@ -31,21 +26,6 @@ pub struct UserProfile {
 pub enum DataKey {
     Profile(Address),
     Admin,
-}
-
-// --- Events ---
-
-#[contractevent]
-pub struct ProfileUpdated {
-    #[topic]
-    pub user: Address,
-    pub metadata_hash: String,
-}
-
-#[contractevent]
-pub struct CuratorRemoved {
-    #[topic]
-    pub curator: Address,
 }
 
 // --- Storage Helpers ---
@@ -105,74 +85,6 @@ impl Registry {
             (Symbol::new(&env, "UserRegistered"),),
             (user, metadata_hash),
         );
-    }
-
-    /// Update a user's metadata hash (user-gated).
-    pub fn update_profile_metadata(env: Env, user: Address, new_metadata_hash: String) {
-        user.require_auth();
-
-        let mut profile = match read_profile(&env, &user) {
-            Some(p) => p,
-            None => panic!("User not registered"),
-        };
-
-        profile.metadata_hash = new_metadata_hash.clone();
-        write_profile(&env, &user, &profile);
-
-        ProfileUpdated {
-            user,
-            metadata_hash: new_metadata_hash,
-        }
-        .publish(&env);
-    }
-
-    /// Promote a user to Curator (admin-gated).
-    pub fn add_curator(env: Env, curator: Address) {
-        let admin = read_admin(&env).expect("Contract not initialized");
-        admin.require_auth();
-
-        let mut profile = match read_profile(&env, &curator) {
-            Some(p) => p,
-            None => panic!("User not found"),
-        };
-
-        if profile.role == UserRole::Curator {
-            panic!("User is already a Curator");
-        }
-
-        profile.role = UserRole::Curator;
-        write_profile(&env, &curator, &profile);
-    }
-
-    /// Demote a Curator back to Finder (admin-gated).
-    pub fn remove_curator(env: Env, curator: Address) {
-        let admin = read_admin(&env).expect("Contract not initialized");
-        admin.require_auth();
-
-        let mut profile = match read_profile(&env, &curator) {
-            Some(p) => p,
-            None => panic!("User not found"),
-        };
-
-        if profile.role != UserRole::Curator {
-            panic!("User is not a Curator");
-        }
-
-        profile.role = UserRole::Finder;
-        write_profile(&env, &curator, &profile);
-
-        CuratorRemoved { curator }.publish(&env);
-    }
-
-    pub fn get_profile(env: Env, user: Address) -> UserProfile {
-        match read_profile(&env, &user) {
-            Some(p) => p,
-            None => panic!("User not found"),
-        }
-    }
-
-    pub fn get_admin(env: Env) -> Address {
-        read_admin(&env).expect("Contract not initialized")
     }
 }
 
