@@ -64,13 +64,7 @@ impl Registry {
 
     /// Register a new user with a given role, verification state, and badge.
     /// The caller must authenticate.
-    pub fn register_user(
-        env: Env,
-        user: Address,
-        role: String,
-        verified: bool,
-        badge: String,
-    ) {
+    pub fn register_user(env: Env, user: Address, role: String, verified: bool, badge: String) {
         user.require_auth();
 
         if read_profile(&env, &user).is_some() {
