@@ -65,7 +65,7 @@ impl Registry {
         write_admin(&env, &admin);
     }
 
-    /// Register a new user as a Finder.
+    /// Register a new user as a Finder..
     pub fn register(env: Env, user: Address, metadata_hash: String) {
         user.require_auth();
 
