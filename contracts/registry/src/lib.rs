@@ -1,9 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    Env, Address, String, Symbol,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Symbol};
 
 #[contracttype]
 #[derive(Clone, PartialEq)]

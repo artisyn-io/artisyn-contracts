@@ -311,7 +311,10 @@ fn test_remove_curator_demotes_curator_to_finder() {
 
     // Verify role has been downgraded to Finder
     let profile_after = client.get_profile(&curator);
-    assert_eq!(profile_after.role, ROLE_FINDER, "Role should revert to Finder");
+    assert_eq!(
+        profile_after.role, ROLE_FINDER,
+        "Role should revert to Finder"
+    );
 }
 
 /// remove_curator must panic when the target user is not registered.
