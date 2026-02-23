@@ -2,18 +2,17 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Symbol};
 
-#[contracttype]
-#[derive(Clone, PartialEq)]
-pub enum UserRole {
-    Finder,
-    Curator,
-    Admin,
-}
+// --- Role Constants ---
+pub const ROLE_FINDER: u32 = 0;
+pub const ROLE_CURATOR: u32 = 1;
+pub const ROLE_ADMIN: u32 = 2;
+
+// --- Storage Types ---
 
 #[contracttype]
 #[derive(Clone)]
-pub struct UserProfile {
-    pub role: UserRole,
+pub struct Profile {
+    pub role: u32,
     pub metadata_hash: String,
     pub is_verified: bool,
 }
@@ -27,13 +26,13 @@ pub enum DataKey {
 
 // --- Storage Helpers ---
 
-fn read_profile(env: &Env, user: &Address) -> Option<UserProfile> {
+pub fn read_profile(env: &Env, user: &Address) -> Option<Profile> {
     env.storage()
         .persistent()
         .get(&DataKey::Profile(user.clone()))
 }
 
-fn write_profile(env: &Env, user: &Address, profile: &UserProfile) {
+pub fn write_profile(env: &Env, user: &Address, profile: &Profile) {
     env.storage()
         .persistent()
         .set(&DataKey::Profile(user.clone()), profile);
@@ -62,7 +61,8 @@ impl Registry {
         write_admin(&env, &admin);
     }
 
-    /// Register a new user as a Finder..
+    /// Register a new user as a Finder.
+    /// Satisfies issue #2: register(user, metadata_hash).
     pub fn register(env: Env, user: Address, metadata_hash: String) {
         user.require_auth();
 
@@ -70,8 +70,8 @@ impl Registry {
             panic!("User already registered");
         }
 
-        let profile = UserProfile {
-            role: UserRole::Finder,
+        let profile = Profile {
+            role: ROLE_FINDER,
             metadata_hash: metadata_hash.clone(),
             is_verified: false,
         };
@@ -82,6 +82,40 @@ impl Registry {
             (Symbol::new(&env, "UserRegistered"),),
             (user, metadata_hash),
         );
+    }
+
+    /// Fetch a user's profile. Panics if not registered.
+    pub fn get_profile(env: Env, user: Address) -> Profile {
+        read_profile(&env, &user).expect("User not found")
+    }
+
+    /// Update a user's verification status. Only the user themselves can do this.
+    pub fn update_verification(env: Env, user: Address, verified: bool) {
+        user.require_auth();
+        let mut profile = read_profile(&env, &user).expect("User not found");
+        profile.is_verified = verified;
+        write_profile(&env, &user, &profile);
+    }
+
+    /// Promote a Finder to Curator. Only callable by the admin.
+    pub fn promote_to_curator(env: Env, user: Address) {
+        let admin = read_admin(&env).expect("Not initialized");
+        admin.require_auth();
+        let mut profile = read_profile(&env, &user).expect("User not found");
+        profile.role = ROLE_CURATOR;
+        write_profile(&env, &user, &profile);
+    }
+
+    /// Demote a Curator back to Finder. Only callable by the admin.
+    pub fn remove_curator(env: Env, curator: Address) {
+        let admin = read_admin(&env).expect("Not initialized");
+        admin.require_auth();
+        let mut profile = read_profile(&env, &curator).expect("User not found");
+        if profile.role != ROLE_CURATOR {
+            panic!("User is not a Curator");
+        }
+        profile.role = ROLE_FINDER;
+        write_profile(&env, &curator, &profile);
     }
 }
 
