@@ -71,6 +71,12 @@ pub struct JobApplication {
     pub artisan: Address,
 }
 
+#[contractevent]
+pub struct JobStarted {
+    pub id: u64,
+    pub artisan: Address,
+}
+
 #[contract]
 pub struct MarketContract;
 
@@ -191,6 +197,35 @@ impl MarketContract {
         }
 
         JobApplication {
+            id: job_id,
+            artisan,
+        }
+        .publish(&env);
+    }
+
+    pub fn start_job(env: Env, artisan: Address, job_id: u64) {
+        artisan.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.status != JobStatus::Assigned {
+            panic!("Job is not assigned");
+        }
+
+        if job.artisan != Some(artisan.clone()) {
+            panic!("Not assigned to this job");
+        }
+
+        job.status = JobStatus::InProgress;
+        job.start_time = env.ledger().timestamp();
+
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        JobStarted {
             id: job_id,
             artisan,
         }
