@@ -82,6 +82,12 @@ pub struct JobCancelled {
     pub id: u64,
 }
 
+#[contractevent]
+pub struct JobCompleted {
+    pub id: u64,
+    pub artisan: Address,
+}
+
 #[contract]
 pub struct MarketContract;
 
@@ -262,6 +268,35 @@ impl MarketContract {
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
 
         JobCancelled { id: job_id }.publish(&env);
+    }
+
+    pub fn complete_job(env: Env, artisan: Address, job_id: u64) {
+        artisan.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.artisan != Some(artisan.clone()) {
+            panic!("Not assigned to this job");
+        }
+
+        if job.status != JobStatus::InProgress {
+            panic!("Job is not in progress");
+        }
+
+        job.status = JobStatus::PendingReview;
+        job.end_time = env.ledger().timestamp();
+
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        JobCompleted {
+            id: job_id,
+            artisan,
+        }
+        .publish(&env);
     }
 }
 
