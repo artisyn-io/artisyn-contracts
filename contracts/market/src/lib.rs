@@ -1,11 +1,24 @@
 #![no_std]
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
 
-// Import the registry contract client for cross-contract calls
+// Manual interface for the Registry contract — avoids depending on the .wasm
+// artifact at compile time (which may not exist yet during development).
 mod registry {
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/registry.wasm"
-    );
+    use soroban_sdk::{contractclient, contracttype, Address, Env};
+
+    #[contracttype]
+    #[derive(Clone)]
+    pub struct Profile {
+        pub role: u32,
+        pub metadata_hash: soroban_sdk::String,
+        pub is_verified: bool,
+    }
+
+    #[contractclient(name = "Client")]
+    #[allow(dead_code)]
+    pub trait RegistryTrait {
+        fn get_profile(env: &Env, user: Address) -> Profile;
+    }
 }
 
 #[contracttype]
@@ -99,8 +112,8 @@ impl MarketContract {
             token,
             amount,
             status: JobStatus::Open,
-            start_time: 0, // Set to 0, will be updated when an artisan starts the job
-            end_time: 0,   // Set to 0, will be updated when the job is completed
+            start_time: 0,
+            end_time: 0,
         };
         env.storage().persistent().set(&DataKey::Job(id), &job);
 

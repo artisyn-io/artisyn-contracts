@@ -42,6 +42,12 @@ pub struct UserVerified {
     pub artisan: Address,
 }
 
+#[contractevent]
+pub struct ApplicationReceived {
+    #[topic]
+    pub user_address: Address,
+}
+
 #[contract]
 pub struct Registry;
 
@@ -120,25 +126,19 @@ impl Registry {
     /// - If `curator` has no registered profile
     /// - If `curator`'s current role is not `Curator`
     pub fn remove_curator(env: Env, curator: Address) {
-        // 1. Verify caller is Admin
         let admin = read_admin(&env).expect("Contract not initialized");
         admin.require_auth();
 
-        // 2. Retrieve target user's profile — panic if not found
         let mut profile = match read_profile(&env, &curator) {
             Some(p) => p,
             None => panic!("User not found"),
         };
 
-        // 3. Ensure target currently has role Curator — panic if not
         if profile.role != ROLE_CURATOR {
             panic!("User is not a Curator");
         }
 
-        // 4. Downgrade role to Finder (safe default)
         profile.role = ROLE_FINDER;
-
-        // 5. Save updated profile
         write_profile(&env, &curator, &profile);
 
         CuratorRemoved { curator }.publish(&env);
@@ -155,6 +155,33 @@ impl Registry {
         read_admin(&env).expect("Contract not initialized")
     }
 
+    /// Signal that the caller is ready for Curator review.
+    ///
+    /// # Panics
+    /// - If `caller` has no registered profile
+    /// - If `caller`'s `metadata_hash` is empty
+    pub fn apply_for_verification(env: Env, caller: Address) {
+        // 1. Authenticate caller
+        caller.require_auth();
+
+        // 2. Load caller profile — panic if not registered
+        let profile = match read_profile(&env, &caller) {
+            Some(p) => p,
+            None => panic!("User not registered"),
+        };
+
+        // 3. Ensure metadata has been uploaded
+        if profile.metadata_hash.is_empty() {
+            panic!("Metadata hash is missing");
+        }
+
+        // 4. Emit ApplicationReceived event
+        ApplicationReceived {
+            user_address: caller,
+        }
+        .publish(&env);
+    }
+
     /// Approve a Finder to become an Artisan (curator/admin-gated).
     ///
     /// # Panics
@@ -162,10 +189,8 @@ impl Registry {
     /// - If the caller is not a Curator or Admin
     /// - If `artisan` has no registered profile
     pub fn approve_artisan(env: Env, caller: Address, artisan: Address) {
-        // 1. Require authentication from caller
         caller.require_auth();
 
-        // 2. Verify caller has Curator or Admin privileges
         let caller_profile = match read_profile(&env, &caller) {
             Some(p) => p,
             None => panic!("Caller not registered"),
@@ -175,19 +200,14 @@ impl Registry {
             panic!("Caller must be Curator or Admin");
         }
 
-        // 3. Retrieve target user's profile
         let mut artisan_profile = match read_profile(&env, &artisan) {
             Some(p) => p,
             None => panic!("User not found"),
         };
 
-        // 4. Update role to Artisan
         artisan_profile.role = ROLE_ARTISAN;
-
-        // 5. Save updated profile
         write_profile(&env, &artisan, &artisan_profile);
 
-        // 6. Emit UserVerified event
         UserVerified { artisan }.publish(&env);
     }
 }
