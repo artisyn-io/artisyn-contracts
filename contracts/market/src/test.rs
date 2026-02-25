@@ -307,9 +307,7 @@ fn create_job_in_pending_review(
             start_time: 0,
             end_time,
         };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Job(job_id), &job);
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
         env.storage().instance().set(&DataKey::JobCounter, &job_id);
         job_id
     })
@@ -424,9 +422,7 @@ fn test_auto_release_funds_wrong_status() {
             start_time: 0,
             end_time: 1000,
         };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Job(job_id), &job);
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
     });
 
     market_client.auto_release_funds(&artisan, &1);

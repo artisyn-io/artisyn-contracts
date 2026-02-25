@@ -231,11 +231,7 @@ impl MarketContract {
         }
 
         let token_client = token::TokenClient::new(&env, &job.token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &artisan,
-            &job.amount,
-        );
+        token_client.transfer(&env.current_contract_address(), &artisan, &job.amount);
 
         job.status = JobStatus::Completed;
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
