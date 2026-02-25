@@ -1,6 +1,6 @@
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events},
+    testutils::{Address as _, Events, Ledger},
     token::{StellarAssetClient, TokenClient},
     Address, Env,
 };
@@ -605,4 +605,178 @@ fn test_complete_job_wrong_status() {
 
     // Job is assigned, but not started yet
     market_client.complete_job(&artisan, &job_id);
+}
+
+fn create_job_in_pending_review(
+    env: &Env,
+    market_id: &Address,
+    artisan: &Address,
+    token_address: &Address,
+    amount: i128,
+    end_time: u64,
+) -> u64 {
+    env.as_contract(market_id, || {
+        let job_id = 1u64;
+        let job = Job {
+            id: job_id,
+            finder: Address::generate(env),
+            artisan: Some(artisan.clone()),
+            token: token_address.clone(),
+            amount,
+            status: JobStatus::PendingReview,
+            start_time: 0,
+            end_time,
+        };
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage().instance().set(&DataKey::JobCounter, &job_id);
+        job_id
+    })
+}
+
+#[test]
+fn test_auto_release_funds_success_after_7_days() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+
+    token_admin_client.mint(&market_id, &500);
+
+    let end_time = 1000u64;
+
+    let job_id = create_job_in_pending_review(
+        &env,
+        &market_id,
+        &artisan,
+        &token_client.address,
+        500,
+        end_time,
+    );
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = end_time + 604800 + 1;
+    });
+
+    assert_eq!(token_client.balance(&artisan), 0);
+    assert_eq!(token_client.balance(&market_id), 500);
+
+    market_client.auto_release_funds(&artisan, &job_id);
+
+    assert_eq!(token_client.balance(&artisan), 500);
+    assert_eq!(token_client.balance(&market_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "7 days have not passed since job completion")]
+fn test_auto_release_funds_fails_before_7_days() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+
+    token_admin_client.mint(&market_id, &500);
+
+    let end_time = 1000u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = end_time + 100;
+    });
+
+    let job_id = create_job_in_pending_review(
+        &env,
+        &market_id,
+        &artisan,
+        &token_client.address,
+        500,
+        end_time,
+    );
+
+    market_client.auto_release_funds(&artisan, &job_id);
+}
+
+#[test]
+#[should_panic(expected = "Job not found")]
+fn test_auto_release_funds_job_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let artisan = Address::generate(&env);
+
+    market_client.auto_release_funds(&artisan, &999);
+}
+
+#[test]
+#[should_panic(expected = "Job is not in PendingReview status")]
+fn test_auto_release_funds_wrong_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let (token_client, _token_admin_client) = create_token(&env, &admin);
+
+    env.as_contract(&market_id, || {
+        let job_id = 1u64;
+        let job = Job {
+            id: job_id,
+            finder: Address::generate(&env),
+            artisan: Some(artisan.clone()),
+            token: token_client.address.clone(),
+            amount: 500,
+            status: JobStatus::Completed,
+            start_time: 0,
+            end_time: 1000,
+        };
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+    });
+
+    market_client.auto_release_funds(&artisan, &1);
+}
+
+#[test]
+#[should_panic(expected = "Only the assigned artisan can release funds")]
+fn test_auto_release_funds_wrong_artisan() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let wrong_artisan = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+
+    token_admin_client.mint(&market_id, &500);
+
+    let end_time = 1000u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = end_time + 604800 + 1;
+    });
+
+    let job_id = create_job_in_pending_review(
+        &env,
+        &market_id,
+        &artisan,
+        &token_client.address,
+        500,
+        end_time,
+    );
+
+    market_client.auto_release_funds(&wrong_artisan, &job_id);
 }

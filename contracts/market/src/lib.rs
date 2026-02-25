@@ -88,6 +88,13 @@ pub struct JobCompleted {
     pub artisan: Address,
 }
 
+#[contractevent]
+pub struct FundsReleased {
+    pub id: u64,
+    pub artisan: Address,
+    pub amount: i128,
+}
+
 #[contract]
 pub struct MarketContract;
 
@@ -295,6 +302,46 @@ impl MarketContract {
         JobCompleted {
             id: job_id,
             artisan,
+        }
+        .publish(&env);
+    }
+
+    pub fn auto_release_funds(env: Env, artisan: Address, job_id: u64) {
+        artisan.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.status != JobStatus::PendingReview {
+            panic!("Job is not in PendingReview status");
+        }
+
+        let artisan_from_job = job.artisan.as_ref().expect("Job has no assigned artisan");
+        if artisan_from_job != &artisan {
+            panic!("Only the assigned artisan can release funds");
+        }
+
+        let current_time = env.ledger().timestamp();
+        let seven_days_in_seconds: u64 = 604800;
+        let release_time = job.end_time + seven_days_in_seconds;
+
+        if current_time <= release_time {
+            panic!("7 days have not passed since job completion");
+        }
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        token_client.transfer(&env.current_contract_address(), &artisan, &job.amount);
+
+        job.status = JobStatus::Completed;
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        FundsReleased {
+            id: job_id,
+            artisan,
+            amount: job.amount,
         }
         .publish(&env);
     }
