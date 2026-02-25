@@ -43,6 +43,7 @@ pub struct Job {
     pub status: JobStatus,
     pub start_time: u64,
     pub end_time: u64,
+    pub deadline: u64,
 }
 
 #[contracttype]
@@ -95,6 +96,13 @@ pub struct FundsReleased {
     pub amount: i128,
 }
 
+#[contractevent]
+pub struct DeadlineExtended {
+    pub id: u64,
+    pub extra_time: u64,
+    pub new_deadline: u64,
+}
+
 #[contract]
 pub struct MarketContract;
 
@@ -132,6 +140,7 @@ impl MarketContract {
             status: JobStatus::Open,
             start_time: 0,
             end_time: 0,
+            deadline: 0,
         };
         env.storage().persistent().set(&DataKey::Job(id), &job);
 
@@ -342,6 +351,35 @@ impl MarketContract {
             id: job_id,
             artisan,
             amount: job.amount,
+        }
+        .publish(&env);
+    }
+
+    pub fn extend_deadline(env: Env, finder: Address, job_id: u64, extra_time: u64) {
+        finder.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.finder != finder {
+            panic!("Not job owner");
+        }
+
+        if job.status == JobStatus::Completed || job.status == JobStatus::Cancelled {
+            panic!("Job is already finalized");
+        }
+
+        job.deadline = job.deadline + extra_time;
+
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        DeadlineExtended {
+            id: job_id,
+            extra_time,
+            new_deadline: job.deadline,
         }
         .publish(&env);
     }

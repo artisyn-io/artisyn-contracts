@@ -626,6 +626,7 @@ fn create_job_in_pending_review(
             status: JobStatus::PendingReview,
             start_time: 0,
             end_time,
+            deadline: 0,
         };
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
         env.storage().instance().set(&DataKey::JobCounter, &job_id);
@@ -741,6 +742,7 @@ fn test_auto_release_funds_wrong_status() {
             status: JobStatus::Completed,
             start_time: 0,
             end_time: 1000,
+            deadline: 0,
         };
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
     });
@@ -779,4 +781,147 @@ fn test_auto_release_funds_wrong_artisan() {
     );
 
     market_client.auto_release_funds(&wrong_artisan, &job_id);
+}
+
+// ── extend_deadline tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_extend_deadline_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    // Extend by 3 days — must not panic
+    market_client.extend_deadline(&finder, &job_id, &259200u64);
+
+    // At least the DeadlineExtended event was emitted from the market contract
+    let events = env.events().all();
+    let market_event_count = events.iter().filter(|e| e.0 == market_id).count();
+    assert!(market_event_count >= 1);
+}
+
+#[test]
+fn test_extend_deadline_multiple_times() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    // Extend twice — deadline accumulates
+    market_client.extend_deadline(&finder, &job_id, &86400u64);
+    market_client.extend_deadline(&finder, &job_id, &172800u64);
+}
+
+#[test]
+#[should_panic(expected = "Job not found")]
+fn test_extend_deadline_job_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let finder = Address::generate(&env);
+
+    market_client.extend_deadline(&finder, &999, &86400u64);
+}
+
+#[test]
+#[should_panic(expected = "Not job owner")]
+fn test_extend_deadline_not_owner() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let other = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    market_client.extend_deadline(&other, &job_id, &86400u64);
+}
+
+#[test]
+#[should_panic(expected = "Job is already finalized")]
+fn test_extend_deadline_cancelled_job() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.cancel_job(&finder, &job_id);
+
+    market_client.extend_deadline(&finder, &job_id, &86400u64);
+}
+
+#[test]
+#[should_panic(expected = "Job is already finalized")]
+fn test_extend_deadline_completed_job() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&market_id, &500);
+
+    let end_time = 1000u64;
+    let job_id = create_job_in_pending_review(
+        &env,
+        &market_id,
+        &artisan,
+        &token_client.address,
+        500,
+        end_time,
+    );
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = end_time + 604800 + 1;
+    });
+
+    market_client.auto_release_funds(&artisan, &job_id);
+
+    // Fetch the finder that was seeded into the job
+    let seeded_finder: Address = env.as_contract(&market_id, || {
+        let job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .unwrap();
+        job.finder.clone()
+    });
+
+    market_client.extend_deadline(&seeded_finder, &job_id, &86400u64);
 }
