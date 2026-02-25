@@ -372,7 +372,7 @@ impl MarketContract {
             panic!("Job is already finalized");
         }
 
-        job.deadline = job.deadline + extra_time;
+        job.deadline += extra_time;
 
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
 
