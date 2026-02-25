@@ -1,8 +1,6 @@
 #![no_std]
-
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, String};
 
-// Using u32 to stay consistent with the existing Profile struct.
 pub const ROLE_FINDER: u32 = 0;
 pub const ROLE_CURATOR: u32 = 1;
 pub const ROLE_ADMIN: u32 = 2;
@@ -14,6 +12,7 @@ pub struct Profile {
     pub role: u32,
     pub metadata_hash: String,
     pub is_verified: bool,
+    pub is_blacklisted: bool,
 }
 
 #[derive(Clone)]
@@ -21,6 +20,13 @@ pub struct Profile {
 pub enum DataKey {
     Profile(Address),
     Admin,
+}
+
+#[contractevent]
+pub struct UserRegistered {
+    #[topic]
+    pub user: Address,
+    pub role: u32,
 }
 
 #[contractevent]
@@ -73,8 +79,6 @@ fn write_admin(env: &Env, admin: &Address) {
 
 #[contractimpl]
 impl Registry {
-    /// One-time initialisation: designate the contract Admin.
-    /// Must be called before any admin-gated functions.
     pub fn initialize(env: Env, admin: Address) {
         if read_admin(&env).is_some() {
             panic!("Already initialized");
@@ -82,7 +86,29 @@ impl Registry {
         write_admin(&env, &admin);
     }
 
-    /// Update a user's metadata hash (user-gated).
+    pub fn register_user(env: Env, user: Address, metadata_hash: String) {
+        user.require_auth();
+
+        if read_profile(&env, &user).is_some() {
+            panic!("User already registered");
+        }
+
+        let profile = Profile {
+            role: ROLE_FINDER,
+            metadata_hash,
+            is_verified: false,
+            is_blacklisted: false,
+        };
+
+        write_profile(&env, &user, &profile);
+
+        UserRegistered {
+            user,
+            role: ROLE_FINDER,
+        }
+        .publish(&env);
+    }
+
     pub fn update_profile_metadata(env: Env, user: Address, new_metadata_hash: String) {
         user.require_auth();
 
@@ -101,7 +127,6 @@ impl Registry {
         .publish(&env);
     }
 
-    /// Promote a user to Curator (admin-gated).
     pub fn add_curator(env: Env, curator: Address) {
         let admin = read_admin(&env).expect("Contract not initialized");
         admin.require_auth();
@@ -119,12 +144,6 @@ impl Registry {
         write_profile(&env, &curator, &profile);
     }
 
-    /// Demote a Curator back to Finder (admin-gated).
-    ///
-    /// # Panics
-    /// - If the contract has not been initialized (no admin set)
-    /// - If `curator` has no registered profile
-    /// - If `curator`'s current role is not `Curator`
     pub fn remove_curator(env: Env, curator: Address) {
         let admin = read_admin(&env).expect("Contract not initialized");
         admin.require_auth();
@@ -155,39 +174,24 @@ impl Registry {
         read_admin(&env).expect("Contract not initialized")
     }
 
-    /// Signal that the caller is ready for Curator review.
-    ///
-    /// # Panics
-    /// - If `caller` has no registered profile
-    /// - If `caller`'s `metadata_hash` is empty
     pub fn apply_for_verification(env: Env, caller: Address) {
-        // 1. Authenticate caller
         caller.require_auth();
 
-        // 2. Load caller profile — panic if not registered
         let profile = match read_profile(&env, &caller) {
             Some(p) => p,
             None => panic!("User not registered"),
         };
 
-        // 3. Ensure metadata has been uploaded
         if profile.metadata_hash.is_empty() {
             panic!("Metadata hash is missing");
         }
 
-        // 4. Emit ApplicationReceived event
         ApplicationReceived {
             user_address: caller,
         }
         .publish(&env);
     }
 
-    /// Approve a Finder to become an Artisan (curator/admin-gated).
-    ///
-    /// # Panics
-    /// - If the contract has not been initialized (no admin set)
-    /// - If the caller is not a Curator or Admin
-    /// - If `artisan` has no registered profile
     pub fn approve_artisan(env: Env, caller: Address, artisan: Address) {
         caller.require_auth();
 
@@ -206,6 +210,7 @@ impl Registry {
         };
 
         artisan_profile.role = ROLE_ARTISAN;
+        artisan_profile.is_verified = true;
         write_profile(&env, &artisan, &artisan_profile);
 
         UserVerified { artisan }.publish(&env);

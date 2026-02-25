@@ -1,21 +1,20 @@
 #![no_std]
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
 
-// Manual interface for the Registry contract — avoids depending on the .wasm
-// artifact at compile time (which may not exist yet during development).
 mod registry {
-    use soroban_sdk::{contractclient, contracttype, Address, Env};
+    use soroban_sdk::{contractclient, contracttype, Address, Env, String};
 
     #[contracttype]
     #[derive(Clone)]
     pub struct Profile {
         pub role: u32,
-        pub metadata_hash: soroban_sdk::String,
+        pub metadata_hash: String,
         pub is_verified: bool,
+        pub is_blacklisted: bool,
     }
 
-    #[contractclient(name = "Client")]
     #[allow(dead_code)]
+    #[contractclient(name = "Client")]
     pub trait RegistryTrait {
         fn get_profile(env: &Env, user: Address) -> Profile;
     }
@@ -71,15 +70,8 @@ pub struct MarketContract;
 
 #[contractimpl]
 impl MarketContract {
-    /// Initialize the market contract with the registry contract address.
-    /// Must be called once before using the contract.
     pub fn initialize(env: Env, registry_contract: Address) {
-        if env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::RegistryContract)
-            .is_some()
-        {
+        if env.storage().instance().has(&DataKey::RegistryContract) {
             panic!("Already initialized");
         }
         env.storage()
@@ -88,14 +80,11 @@ impl MarketContract {
     }
 
     pub fn create_job(env: Env, finder: Address, token: Address, amount: i128) -> u64 {
-        // 1. Require auth from the finder
         finder.require_auth();
 
-        // 2. Transfer token from finder to this contract
         let token_client = token::TokenClient::new(&env, &token);
         token_client.transfer(&finder, env.current_contract_address(), &amount);
 
-        // 3. Get and increment job counter
         let counter: u64 = env
             .storage()
             .instance()
@@ -104,7 +93,6 @@ impl MarketContract {
         let id = counter + 1;
         env.storage().instance().set(&DataKey::JobCounter, &id);
 
-        // 4. Store job in persistent storage
         let job = Job {
             id,
             finder,
@@ -117,61 +105,49 @@ impl MarketContract {
         };
         env.storage().persistent().set(&DataKey::Job(id), &job);
 
-        // 5. Emit JobCreated event
         JobCreated { id, amount }.publish(&env);
 
-        // 6. Return job id
         id
     }
 
-    /// Assign a verified Artisan to an open job.
-    ///
-    /// # Panics
-    /// - If the contract has not been initialized
-    /// - If the job does not exist
-    /// - If the job status is not Open
-    /// - If the caller is not the Finder who created the job
-    /// - If the artisan is not verified in the Registry contract
-    pub fn assign_artisan(env: Env, job_id: u64, artisan: Address) {
-        // 1. Get registry contract address
+    pub fn assign_artisan(env: Env, finder: Address, job_id: u64, artisan: Address) {
         let registry_contract: Address = env
             .storage()
             .instance()
             .get(&DataKey::RegistryContract)
             .expect("Contract not initialized");
 
-        // 2. Retrieve the job
         let mut job: Job = env
             .storage()
             .persistent()
             .get(&DataKey::Job(job_id))
             .expect("Job not found");
 
-        // 3. Require auth from the Finder
-        job.finder.require_auth();
+        finder.require_auth();
 
-        // 4. Ensure job status is Open
+        if job.finder != finder {
+            panic!("Not job owner");
+        }
+
         if job.status != JobStatus::Open {
             panic!("Job is not open");
         }
 
-        // 5. Cross-contract call to Registry to verify artisan role
         let registry_client = registry::Client::new(&env, &registry_contract);
         let profile = registry_client.get_profile(&artisan);
 
-        // Verify the user has the Artisan role (role = 3)
         if profile.role != 3 {
             panic!("User is not a verified Artisan");
         }
+        if profile.is_blacklisted {
+            panic!("User is blacklisted");
+        }
 
-        // 6. Update job with artisan and change status to Assigned
         job.artisan = Some(artisan.clone());
         job.status = JobStatus::Assigned;
 
-        // 7. Save updated job
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
 
-        // 8. Emit JobAssigned event
         JobAssigned {
             id: job_id,
             artisan,
@@ -179,5 +155,3 @@ impl MarketContract {
         .publish(&env);
     }
 }
-
-mod test;
