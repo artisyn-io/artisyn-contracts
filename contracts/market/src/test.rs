@@ -925,3 +925,152 @@ fn test_extend_deadline_completed_job() {
 
     market_client.extend_deadline(&seeded_finder, &job_id, &86400u64);
 }
+
+// ── increase_budget tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_increase_budget_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    // Balances before top-up
+    assert_eq!(token_client.balance(&finder), 500);
+    assert_eq!(token_client.balance(&market_id), 500);
+
+    market_client.increase_budget(&finder, &job_id, &200);
+
+    // Contract received the extra funds
+    assert_eq!(token_client.balance(&finder), 300);
+    assert_eq!(token_client.balance(&market_id), 700);
+}
+
+#[test]
+fn test_increase_budget_multiple_times() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &300);
+
+    market_client.increase_budget(&finder, &job_id, &100);
+    market_client.increase_budget(&finder, &job_id, &200);
+
+    // 300 + 100 + 200 = 600 in escrow
+    assert_eq!(token_client.balance(&market_id), 600);
+    assert_eq!(token_client.balance(&finder), 400);
+}
+
+#[test]
+#[should_panic(expected = "Job not found")]
+fn test_increase_budget_job_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let finder = Address::generate(&env);
+
+    market_client.increase_budget(&finder, &999, &100);
+}
+
+#[test]
+#[should_panic(expected = "Not job owner")]
+fn test_increase_budget_not_owner() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let other = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+    token_admin_client.mint(&other, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    market_client.increase_budget(&other, &job_id, &100);
+}
+
+#[test]
+#[should_panic(expected = "Job is already finalized")]
+fn test_increase_budget_cancelled_job() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.cancel_job(&finder, &job_id);
+
+    market_client.increase_budget(&finder, &job_id, &100);
+}
+
+#[test]
+#[should_panic(expected = "Job is already finalized")]
+fn test_increase_budget_completed_job() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
+
+    let admin = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&market_id, &500);
+
+    let end_time = 1000u64;
+    let job_id = create_job_in_pending_review(
+        &env,
+        &market_id,
+        &artisan,
+        &token_client.address,
+        500,
+        end_time,
+    );
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = end_time + 604800 + 1;
+    });
+
+    market_client.auto_release_funds(&artisan, &job_id);
+
+    let seeded_finder: Address = env.as_contract(&market_id, || {
+        let job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .unwrap();
+        job.finder.clone()
+    });
+
+    token_admin_client.mint(&seeded_finder, &100);
+    market_client.increase_budget(&seeded_finder, &job_id, &100);
+}
