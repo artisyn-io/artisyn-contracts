@@ -72,6 +72,23 @@ pub struct JobApplication {
 }
 
 #[contractevent]
+pub struct JobStarted {
+    pub id: u64,
+    pub artisan: Address,
+}
+
+#[contractevent]
+pub struct JobCancelled {
+    pub id: u64,
+}
+
+#[contractevent]
+pub struct JobCompleted {
+    pub id: u64,
+    pub artisan: Address,
+}
+
+#[contractevent]
 pub struct FundsReleased {
     pub id: u64,
     pub artisan: Address,
@@ -198,6 +215,91 @@ impl MarketContract {
         }
 
         JobApplication {
+            id: job_id,
+            artisan,
+        }
+        .publish(&env);
+    }
+
+    pub fn start_job(env: Env, artisan: Address, job_id: u64) {
+        artisan.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.status != JobStatus::Assigned {
+            panic!("Job is not assigned");
+        }
+
+        if job.artisan != Some(artisan.clone()) {
+            panic!("Not assigned to this job");
+        }
+
+        job.status = JobStatus::InProgress;
+        job.start_time = env.ledger().timestamp();
+
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        JobStarted {
+            id: job_id,
+            artisan,
+        }
+        .publish(&env);
+    }
+
+    pub fn cancel_job(env: Env, finder: Address, job_id: u64) {
+        finder.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.finder != finder {
+            panic!("Not job owner");
+        }
+
+        if job.status != JobStatus::Open {
+            panic!("Job is not open");
+        }
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        token_client.transfer(&env.current_contract_address(), &finder, &job.amount);
+
+        job.status = JobStatus::Cancelled;
+
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        JobCancelled { id: job_id }.publish(&env);
+    }
+
+    pub fn complete_job(env: Env, artisan: Address, job_id: u64) {
+        artisan.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.artisan != Some(artisan.clone()) {
+            panic!("Not assigned to this job");
+        }
+
+        if job.status != JobStatus::InProgress {
+            panic!("Job is not in progress");
+        }
+
+        job.status = JobStatus::PendingReview;
+        job.end_time = env.ledger().timestamp();
+
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        JobCompleted {
             id: job_id,
             artisan,
         }
