@@ -103,7 +103,8 @@ fn test_assign_artisan_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, _registry_id, _registry_client) = setup_market_and_registry(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -194,7 +195,8 @@ fn test_apply_for_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, _registry_id, _registry_client) = setup_market_and_registry(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env);
     let artisan = Address::generate(&env);
 
     market_client.apply_for_job(&artisan, &999);
@@ -278,9 +280,10 @@ fn test_apply_for_job_blacklisted() {
             is_verified: false,
             is_blacklisted: true,
         };
-        env.storage()
-            .persistent()
-            .set(&::registry::DataKey::Profile(blacklisted_artisan.clone()), &profile);
+        env.storage().persistent().set(
+            &::registry::DataKey::Profile(blacklisted_artisan.clone()),
+            &profile,
+        );
     });
 
     market_client.apply_for_job(&blacklisted_artisan, &job_id);
