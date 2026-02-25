@@ -261,3 +261,96 @@ fn test_approve_artisan_is_idempotent() {
     client.approve_artisan(&curator, &finder);
     assert_eq!(client.get_profile(&finder).role, ROLE_ARTISAN);
 }
+
+#[test]
+fn test_add_curator_by_admin() {
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+    seed_profile(&env, &contract_id, &finder, ROLE_FINDER);
+
+    client.add_curator(&finder);
+
+    let profile_after = client.get_profile(&finder);
+    assert_eq!(profile_after.role, ROLE_CURATOR);
+}
+
+#[test]
+fn test_blacklisted_user_state_persisted() {
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+
+    env.as_contract(&contract_id, || {
+        write_profile(
+            &env,
+            &user,
+            &Profile {
+                role: ROLE_ARTISAN,
+                metadata_hash: String::from_str(&env, "hash"),
+                is_verified: true,
+                is_blacklisted: true,
+            },
+        );
+    });
+
+    let profile = client.get_profile(&user);
+    assert!(profile.is_blacklisted);
+    assert_eq!(profile.role, ROLE_ARTISAN);
+    assert!(profile.is_verified);
+}
+
+#[test]
+fn test_full_lifecycle() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let curator_user = Address::generate(&env);
+    let artisan_user = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+
+    client.register_user(&curator_user, &String::from_str(&env, "curator_metadata"));
+    client.register_user(&artisan_user, &String::from_str(&env, "artisan_metadata"));
+
+    let curator_profile = client.get_profile(&curator_user);
+    assert_eq!(curator_profile.role, ROLE_FINDER);
+
+    client.add_curator(&curator_user);
+    let curator_profile_after = client.get_profile(&curator_user);
+    assert_eq!(curator_profile_after.role, ROLE_CURATOR);
+
+    client.approve_artisan(&curator_user, &artisan_user);
+    let artisan_profile = client.get_profile(&artisan_user);
+    assert_eq!(artisan_profile.role, ROLE_ARTISAN);
+    assert!(artisan_profile.is_verified);
+
+    client.update_profile_metadata(&artisan_user, &String::from_str(&env, "updated_metadata"));
+    let artisan_profile_updated = client.get_profile(&artisan_user);
+    assert_eq!(
+        artisan_profile_updated.metadata_hash,
+        String::from_str(&env, "updated_metadata")
+    );
+}
+
+#[test]
+#[should_panic(expected = "Caller must be Curator or Admin")]
+fn test_full_lifecycle_finder_cannot_approve() {
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let finder = Address::generate(&env);
+    let artisan_candidate = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+    seed_profile(&env, &contract_id, &finder, ROLE_FINDER);
+    seed_profile(&env, &contract_id, &artisan_candidate, ROLE_FINDER);
+
+    client.approve_artisan(&finder, &artisan_candidate);
+}
