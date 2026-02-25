@@ -103,6 +103,13 @@ pub struct DeadlineExtended {
     pub new_deadline: u64,
 }
 
+#[contractevent]
+pub struct BudgetIncreased {
+    pub id: u64,
+    pub added_amount: i128,
+    pub new_amount: i128,
+}
+
 #[contract]
 pub struct MarketContract;
 
@@ -380,6 +387,38 @@ impl MarketContract {
             id: job_id,
             extra_time,
             new_deadline: job.deadline,
+        }
+        .publish(&env);
+    }
+
+    pub fn increase_budget(env: Env, finder: Address, job_id: u64, added_amount: i128) {
+        finder.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.finder != finder {
+            panic!("Not job owner");
+        }
+
+        if job.status == JobStatus::Completed || job.status == JobStatus::Cancelled {
+            panic!("Job is already finalized");
+        }
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        token_client.transfer(&finder, env.current_contract_address(), &added_amount);
+
+        job.amount += added_amount;
+
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        BudgetIncreased {
+            id: job_id,
+            added_amount,
+            new_amount: job.amount,
         }
         .publish(&env);
     }
