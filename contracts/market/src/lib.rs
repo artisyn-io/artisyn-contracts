@@ -1,5 +1,7 @@
 #![no_std]
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec, log};
+
 
 mod registry {
     use soroban_sdk::{contractclient, contracttype, Address, Env, String};
@@ -422,6 +424,187 @@ impl MarketContract {
         }
         .publish(&env);
     }
+
+    // contracts/market/src/lib.rs
+// Add this to your existing contract implementation
+
+
+// Assuming you have these types defined elsewhere in your contract
+// If not, you'll need to add them
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JobStatus {
+    Created,
+    InProgress,
+    PendingReview,
+    Completed,
+    Disputed,
+}
+
+#[derive(Clone)]
+pub struct Job {
+    pub id: u64,
+    pub finder: Address,
+    pub artisan: Address,
+    pub escrow_amount: i128,
+    pub status: JobStatus,
+    pub description: String,
+}
+
+// Storage keys
+const JOBS: Symbol = symbol_short!("JOBS");
+const ADMIN: Symbol = symbol_short!("ADMIN");
+const FEE_PERCENTAGE: u32 = 1; // 1% fee
+
+#[contract]
+pub struct MarketplaceContract;
+
+#[contractimpl]
+impl MarketplaceContract {
+    /// Confirms delivery and releases escrowed funds to the Artisan
+    /// 
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `finder` - The address of the Finder confirming delivery
+    /// * `job_id` - The ID of the job to confirm
+    /// 
+    /// # Panics
+    /// * If the finder is not authenticated
+    /// * If the job doesn't exist
+    /// * If the caller is not the job's finder
+    /// * If the job status is not PendingReview
+    /// 
+    /// # Events
+    /// Emits `FundsReleased` event with job_id, artisan address, and payout amount
+    pub fn confirm_delivery(env: Env, finder: Address, job_id: u64) {
+        // 1. Authenticate finder
+        finder.require_auth();
+        
+        // 2. Retrieve Job and validate finder
+        let mut job = Self::get_job(&env, job_id);
+        
+        // Assert that the caller is the job's finder
+        if job.finder != finder {
+            panic!("Only the job's finder can confirm delivery");
+        }
+        
+        // 3. Assert job status is PendingReview
+        if job.status != JobStatus::PendingReview {
+            panic!("Job must be in PendingReview status to confirm delivery");
+        }
+        
+        // 4. Calculate Payout & Fee
+        let total_amount = job.escrow_amount;
+        let fee_amount = Self::calculate_fee(total_amount);
+        let payout_amount = total_amount - fee_amount;
+        
+        // Log for debugging
+        log!(
+            &env,
+            "Confirming delivery - Job ID: {}, Total: {}, Fee: {}, Payout: {}",
+            job_id,
+            total_amount,
+            fee_amount,
+            payout_amount
+        );
+        
+        // 5. Transfer Payout to Artisan
+        Self::transfer_funds(&env, &job.artisan, payout_amount);
+        
+        // 6. Transfer Fee to Admin
+        let admin = Self::get_admin(&env);
+        Self::transfer_funds(&env, &admin, fee_amount);
+        
+        // 7. Update Job status to Completed
+        job.status = JobStatus::Completed;
+        Self::save_job(&env, job_id, &job);
+        
+        // 8. Emit FundsReleased event
+        env.events().publish(
+            (symbol_short!("FUNDS_REL"), job_id),
+            (job.artisan.clone(), payout_amount)
+        );
+        
+        log!(&env, "Delivery confirmed successfully for job {}", job_id);
+    }
+    
+    // Helper Functions
+    
+    /// Retrieves a job from storage
+    fn get_job(env: &Env, job_id: u64) -> Job {
+        let jobs: Vec<Job> = env
+            .storage()
+            .instance()
+            .get(&JOBS)
+            .unwrap_or(Vec::new(env));
+        
+        jobs.iter()
+            .find(|job| job.id == job_id)
+            .unwrap_or_else(|| panic!("Job with ID {} not found", job_id))
+    }
+    
+    /// Saves a job to storage
+    fn save_job(env: &Env, job_id: u64, updated_job: &Job) {
+        let mut jobs: Vec<Job> = env
+            .storage()
+            .instance()
+            .get(&JOBS)
+            .unwrap_or(Vec::new(env));
+        
+        // Find and update the job
+        let mut found = false;
+        for i in 0..jobs.len() {
+            if let Some(job) = jobs.get(i) {
+                if job.id == job_id {
+                    jobs.set(i, updated_job.clone());
+                    found = true;
+                    break;
+                }
+            }
+        }
+        
+        if !found {
+            panic!("Job with ID {} not found for update", job_id);
+        }
+        
+        env.storage().instance().set(&JOBS, &jobs);
+    }
+    
+    /// Calculates the platform fee (1% of total amount)
+    fn calculate_fee(amount: i128) -> i128 {
+        // Calculate 1% fee
+        // Using integer arithmetic: (amount * 1) / 100
+        (amount * FEE_PERCENTAGE as i128) / 100
+    }
+    
+    /// Transfers funds from contract to recipient
+    fn transfer_funds(env: &Env, recipient: &Address, amount: i128) {
+        // This is a placeholder - actual implementation depends on your token contract
+        // You'll need to call your token contract's transfer function
+        // Example using Stellar Asset Contract:
+        
+        // let token_client = token::Client::new(env, &get_token_address(env));
+        // token_client.transfer(
+        //     &env.current_contract_address(),
+        //     recipient,
+        //     &amount
+        // );
+        
+        log!(env, "Transferring {} to {:?}", amount, recipient);
+        
+        // For now, this is a placeholder that you'll need to replace
+        // with actual token transfer logic based on your token implementation
+    }
+    
+    /// Retrieves the admin address from storage
+    fn get_admin(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&ADMIN)
+            .unwrap_or_else(|| panic!("Admin address not set"))
+    }
+}
+
 }
 
 #[cfg(test)]
