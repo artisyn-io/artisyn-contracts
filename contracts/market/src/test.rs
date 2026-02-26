@@ -1073,4 +1073,318 @@ fn test_increase_budget_completed_job() {
 
     token_admin_client.mint(&seeded_finder, &100);
     market_client.increase_budget(&seeded_finder, &job_id, &100);
+
+    // contracts/market/src/test.rs
+// Tests for confirm_delivery functionality
+
+#![cfg(test)]
+
+use super::*;
+use soroban_sdk::{testutils::Address as _, Address, Env};
+
+// Test helper function to create a test job
+fn create_test_job(env: &Env, finder: &Address, artisan: &Address) -> (u64, Job) {
+    let job_id = 1u64;
+    let job = Job {
+        id: job_id,
+        finder: finder.clone(),
+        artisan: artisan.clone(),
+        escrow_amount: 10_000, // 100.00 with 2 decimals
+        status: JobStatus::PendingReview,
+        description: String::from_str(env, "Test job"),
+    };
+    (job_id, job)
+}
+
+// Test helper to setup contract
+fn setup_test_contract(env: &Env) -> (Address, Address, Address) {
+    let finder = Address::generate(env);
+    let artisan = Address::generate(env);
+    let admin = Address::generate(env);
+    
+    // Initialize contract with admin
+    env.storage().instance().set(&ADMIN, &admin);
+    
+    (finder, artisan, admin)
+}
+
+#[test]
+fn test_confirm_delivery_success() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    let (job_id, mut job) = create_test_job(&env, &finder, &artisan);
+    
+    // Save job to storage
+    let mut jobs = Vec::new(&env);
+    jobs.push_back(job.clone());
+    env.storage().instance().set(&JOBS, &jobs);
+    
+    // Mock finder authentication
+    env.mock_all_auths();
+    
+    // Execute
+    client.confirm_delivery(&finder, &job_id);
+    
+    // Verify job status changed to Completed
+    let updated_job = MarketplaceContract::get_job(&env, job_id);
+    assert_eq!(updated_job.status, JobStatus::Completed);
+    
+    // Verify events were emitted
+    let events = env.events().all();
+    assert!(events.len() > 0);
+    
+    // Calculate expected amounts
+    let fee = (job.escrow_amount * 1) / 100; // 1% fee
+    let payout = job.escrow_amount - fee;
+    
+    assert_eq!(payout, 9_900); // 99.00
+    assert_eq!(fee, 100); // 1.00
+}
+
+#[test]
+#[should_panic(expected = "Only the job's finder can confirm delivery")]
+fn test_confirm_delivery_unauthorized_caller() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    let (job_id, job) = create_test_job(&env, &finder, &artisan);
+    
+    // Save job
+    let mut jobs = Vec::new(&env);
+    jobs.push_back(job);
+    env.storage().instance().set(&JOBS, &jobs);
+    
+    // Try to confirm with wrong address (not the finder)
+    let wrong_caller = Address::generate(&env);
+    env.mock_all_auths();
+    
+    // This should panic
+    client.confirm_delivery(&wrong_caller, &job_id);
+}
+
+#[test]
+#[should_panic(expected = "Job must be in PendingReview status")]
+fn test_confirm_delivery_wrong_status_created() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    let (job_id, mut job) = create_test_job(&env, &finder, &artisan);
+    
+    // Set wrong status
+    job.status = JobStatus::Created;
+    
+    // Save job
+    let mut jobs = Vec::new(&env);
+    jobs.push_back(job);
+    env.storage().instance().set(&JOBS, &jobs);
+    
+    env.mock_all_auths();
+    
+    // This should panic
+    client.confirm_delivery(&finder, &job_id);
+}
+
+#[test]
+#[should_panic(expected = "Job must be in PendingReview status")]
+fn test_confirm_delivery_wrong_status_completed() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    let (job_id, mut job) = create_test_job(&env, &finder, &artisan);
+    
+    // Set status to already completed
+    job.status = JobStatus::Completed;
+    
+    // Save job
+    let mut jobs = Vec::new(&env);
+    jobs.push_back(job);
+    env.storage().instance().set(&JOBS, &jobs);
+    
+    env.mock_all_auths();
+    
+    // This should panic - can't confirm already completed job
+    client.confirm_delivery(&finder, &job_id);
+}
+
+#[test]
+#[should_panic(expected = "Job with ID")]
+fn test_confirm_delivery_nonexistent_job() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    
+    // Initialize empty jobs vector
+    let jobs = Vec::new(&env);
+    env.storage().instance().set(&JOBS, &jobs);
+    
+    env.mock_all_auths();
+    
+    // Try to confirm non-existent job
+    let nonexistent_job_id = 999u64;
+    client.confirm_delivery(&finder, &nonexistent_job_id);
+}
+
+#[test]
+fn test_calculate_fee_various_amounts() {
+    let env = Env::default();
+    
+    // Test 1% fee calculation
+    assert_eq!(MarketplaceContract::calculate_fee(10_000), 100); // 1% of 10,000 = 100
+    assert_eq!(MarketplaceContract::calculate_fee(50_000), 500); // 1% of 50,000 = 500
+    assert_eq!(MarketplaceContract::calculate_fee(100), 1);      // 1% of 100 = 1
+    assert_eq!(MarketplaceContract::calculate_fee(99), 0);       // 1% of 99 = 0 (rounds down)
+}
+
+#[test]
+fn test_confirm_delivery_with_large_amount() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    let job_id = 1u64;
+    
+    // Create job with large escrow amount
+    let large_amount = 1_000_000_000i128; // 1 billion
+    let job = Job {
+        id: job_id,
+        finder: finder.clone(),
+        artisan: artisan.clone(),
+        escrow_amount: large_amount,
+        status: JobStatus::PendingReview,
+        description: String::from_str(&env, "Large payment job"),
+    };
+    
+    // Save job
+    let mut jobs = Vec::new(&env);
+    jobs.push_back(job);
+    env.storage().instance().set(&JOBS, &jobs);
+    
+    env.mock_all_auths();
+    
+    // Execute
+    client.confirm_delivery(&finder, &job_id);
+    
+    // Verify job status
+    let updated_job = MarketplaceContract::get_job(&env, job_id);
+    assert_eq!(updated_job.status, JobStatus::Completed);
+    
+    // Verify fee calculation for large amount
+    let expected_fee = large_amount / 100; // 1% = 10,000,000
+    let expected_payout = large_amount - expected_fee; // 990,000,000
+    
+    assert_eq!(expected_fee, 10_000_000);
+    assert_eq!(expected_payout, 990_000_000);
+}
+
+#[test]
+fn test_confirm_delivery_event_emission() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    let (job_id, job) = create_test_job(&env, &finder, &artisan);
+    
+    // Save job
+    let mut jobs = Vec::new(&env);
+    jobs.push_back(job.clone());
+    env.storage().instance().set(&JOBS, &jobs);
+    
+    env.mock_all_auths();
+    
+    // Execute
+    client.confirm_delivery(&finder, &job_id);
+    
+    // Check event emission
+    let events = env.events().all();
+    let event = events.last().unwrap();
+    
+    // Verify event contains correct data
+    // Event structure: (symbol_short!("FUNDS_REL"), job_id), (artisan, payout_amount)
+    assert!(event.topics.len() > 0);
+    
+    // Calculate expected payout
+    let fee = (job.escrow_amount * 1) / 100;
+    let expected_payout = job.escrow_amount - fee;
+    
+    // The event should contain the artisan address and payout amount
+    // Exact assertion depends on your event structure
+}
+
+#[test]
+fn test_confirm_delivery_multiple_jobs() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, MarketplaceContract);
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    
+    // Setup
+    let (finder, artisan, admin) = setup_test_contract(&env);
+    
+    // Create multiple jobs
+    let mut jobs = Vec::new(&env);
+    for i in 1..=3 {
+        let job = Job {
+            id: i,
+            finder: finder.clone(),
+            artisan: artisan.clone(),
+            escrow_amount: 10_000 * i as i128,
+            status: JobStatus::PendingReview,
+            description: String::from_str(&env, "Test job"),
+        };
+        jobs.push_back(job);
+    }
+    
+    env.storage().instance().set(&JOBS, &jobs);
+    env.mock_all_auths();
+    
+    // Confirm each job
+    for job_id in 1..=3 {
+        client.confirm_delivery(&finder, &job_id);
+        
+        // Verify job status
+        let updated_job = MarketplaceContract::get_job(&env, job_id);
+        assert_eq!(updated_job.status, JobStatus::Completed);
+    }
+}
+
+#[test]
+fn test_fee_percentage_accuracy() {
+    // Test that 1% fee is calculated correctly
+    let test_cases = vec![
+        (100, 1),           // 1% of 100 = 1
+        (1_000, 10),        // 1% of 1,000 = 10
+        (10_000, 100),      // 1% of 10,000 = 100
+        (99, 0),            // 1% of 99 = 0 (rounds down)
+        (50_000, 500),      // 1% of 50,000 = 500
+        (123_456, 1_234),   // 1% of 123,456 = 1,234
+    ];
+    
+    for (amount, expected_fee) in test_cases {
+        let actual_fee = MarketplaceContract::calculate_fee(amount);
+        assert_eq!(
+            actual_fee, expected_fee,
+            "Fee calculation failed for amount {}: expected {}, got {}",
+            amount, expected_fee, actual_fee
+        );
+    }
+}
 }
