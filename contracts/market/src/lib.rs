@@ -52,6 +52,7 @@ pub enum DataKey {
     Job(u64),
     JobCounter,
     RegistryContract,
+    Admin,
 }
 
 #[contractevent]
@@ -110,18 +111,28 @@ pub struct BudgetIncreased {
     pub new_amount: i128,
 }
 
+#[contractevent]
+pub struct AdminTransferred {
+    #[topic]
+    pub new_admin: Address,
+}
+
 #[contract]
 pub struct MarketContract;
 
 #[contractimpl]
 impl MarketContract {
-    pub fn initialize(env: Env, registry_contract: Address) {
+    pub fn initialize(env: Env, registry_contract: Address, admin: &Address) {
         if env.storage().instance().has(&DataKey::RegistryContract) {
-            panic!("Already initialized");
+            panic!("Registry already initialized");
+        }
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic!("Admin already initialized");
         }
         env.storage()
             .instance()
             .set(&DataKey::RegistryContract, &registry_contract);
+        env.storage().instance().set(&DataKey::Admin, admin);
     }
 
     pub fn create_job(env: Env, finder: Address, token: Address, amount: i128) -> u64 {
@@ -421,6 +432,21 @@ impl MarketContract {
             new_amount: job.amount,
         }
         .publish(&env);
+    }
+
+    pub fn transfer_admin(env: Env, old_admin: Address, new_admin: Address) {
+        old_admin.require_auth();
+
+        let current_admin = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+        assert!(old_admin == current_admin, "Unauthorized caller");
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+
+        AdminTransferred { new_admin }.publish(&env);
     }
 }
 

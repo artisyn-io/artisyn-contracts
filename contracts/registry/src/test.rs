@@ -354,3 +354,60 @@ fn test_full_lifecycle_finder_cannot_approve() {
 
     client.approve_artisan(&finder, &artisan_candidate);
 }
+
+// ── transfer_admin tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_success() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+    client.transfer_admin(&admin, &new_admin);
+
+    // Verify new admin is now in control by transferring again
+    let another_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin, &another_admin);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_transfer_admin_wrong_caller() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+    client.transfer_admin(&impostor, &new_admin);
+}
+
+#[test]
+#[should_panic(expected = "No current admin")]
+fn test_transfer_admin_not_initialized() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    env.mock_all_auths();
+
+    // No initialize() call — should panic
+    client.transfer_admin(&admin, &new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_transfer_admin_old_admin_cannot_transfer_again() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+    client.transfer_admin(&admin, &new_admin);
+
+    // old admin tries to reclaim — must fail
+    client.transfer_admin(&admin, &admin);
+}

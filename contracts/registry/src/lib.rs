@@ -54,6 +54,12 @@ pub struct ApplicationReceived {
     pub user_address: Address,
 }
 
+#[contractevent]
+pub struct AdminTransferred {
+    #[topic]
+    pub new_admin: Address,
+}
+
 #[contract]
 pub struct Registry;
 
@@ -214,6 +220,17 @@ impl Registry {
         write_profile(&env, &artisan, &artisan_profile);
 
         UserVerified { artisan }.publish(&env);
+    }
+
+    pub fn transfer_admin(env: Env, old_admin: Address, new_admin: Address) {
+        old_admin.require_auth();
+
+        let current_admin = read_admin(&env).expect("No current admin");
+        assert!(old_admin == current_admin, "Unauthorized caller");
+
+        write_admin(&env, &new_admin);
+
+        AdminTransferred { new_admin }.publish(&env);
     }
 }
 

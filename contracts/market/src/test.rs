@@ -15,6 +15,7 @@ fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, StellarAsse
 
 fn setup_market_and_registry(
     env: &Env,
+    admin: Address,
 ) -> (
     Address,
     MarketContractClient<'_>,
@@ -27,7 +28,7 @@ fn setup_market_and_registry(
     let registry_id = env.register(::registry::Registry, ());
     let registry_client = ::registry::RegistryClient::new(env, &registry_id);
 
-    market_client.initialize(&registry_id);
+    market_client.initialize(&registry_id, &admin);
 
     (market_id, market_client, registry_id, registry_client)
 }
@@ -72,10 +73,11 @@ fn test_create_job_transfers_funds_and_returns_id() {
 fn test_assign_artisan_success() {
     let env = Env::default();
     env.mock_all_auths();
-
-    let (market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -101,8 +103,10 @@ fn test_assign_artisan_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
+    let admin = Address::generate(&env);
+
     let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
+        setup_market_and_registry(&env, admin);
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -115,9 +119,10 @@ fn test_assign_artisan_job_not_open() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -142,9 +147,10 @@ fn test_assign_artisan_not_verified() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let non_artisan = Address::generate(&env);
 
@@ -165,9 +171,10 @@ fn test_apply_for_job_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -193,8 +200,10 @@ fn test_apply_for_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
+    let admin = Address::generate(&env);
+
     let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
+        setup_market_and_registry(&env, admin);
     let artisan = Address::generate(&env);
 
     market_client.apply_for_job(&artisan, &999);
@@ -206,9 +215,10 @@ fn test_apply_for_job_not_open() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -233,9 +243,10 @@ fn test_apply_for_job_not_artisan() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let non_artisan = Address::generate(&env);
 
@@ -257,9 +268,10 @@ fn test_apply_for_job_blacklisted() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let blacklisted_artisan = Address::generate(&env);
 
@@ -292,9 +304,10 @@ fn test_start_job_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -321,8 +334,9 @@ fn test_start_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
+    let admin = Address::generate(&env);
     let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
+        setup_market_and_registry(&env, admin.clone());
     let artisan = Address::generate(&env);
 
     market_client.start_job(&artisan, &999);
@@ -334,9 +348,10 @@ fn test_start_job_not_assigned() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
     let wrong_artisan = Address::generate(&env);
@@ -360,9 +375,10 @@ fn test_start_job_wrong_status() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -384,9 +400,10 @@ fn test_start_job_already_started() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -409,7 +426,8 @@ fn test_cancel_job_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _, _) = setup_market_and_registry(&env);
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _, _) = setup_market_and_registry(&env, admin.clone());
 
     let admin = Address::generate(&env);
     let finder = Address::generate(&env);
@@ -437,7 +455,8 @@ fn test_cancel_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, market_client, _, _) = setup_market_and_registry(&env);
+    let admin = Address::generate(&env);
+    let (_, market_client, _, _) = setup_market_and_registry(&env, admin);
 
     let finder = Address::generate(&env);
 
@@ -450,7 +469,8 @@ fn test_cancel_job_not_owner() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let market_client = setup_market_and_registry(&env).1;
+    let admin = Address::generate(&env);
+    let market_client = setup_market_and_registry(&env, admin).1;
 
     let admin = Address::generate(&env);
     let finder = Address::generate(&env);
@@ -470,9 +490,8 @@ fn test_cancel_job_already_assigned() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, market_client, registry_id, _) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_, market_client, registry_id, _) = setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
@@ -494,9 +513,8 @@ fn test_cancel_job_already_in_progress() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, market_client, registry_id, _) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_, market_client, registry_id, _) = setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
@@ -518,9 +536,9 @@ fn test_complete_job_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -548,7 +566,8 @@ fn test_complete_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, market_client, _, _) = setup_market_and_registry(&env);
+    let admin = Address::generate(&env);
+    let (_, market_client, _, _) = setup_market_and_registry(&env, admin);
     let artisan = Address::generate(&env);
 
     market_client.complete_job(&artisan, &999);
@@ -560,9 +579,9 @@ fn test_complete_job_not_assigned() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
     let wrong_artisan = Address::generate(&env);
@@ -587,9 +606,9 @@ fn test_complete_job_wrong_status() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, market_client, registry_id, registry_client) = setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let artisan = Address::generate(&env);
 
@@ -639,10 +658,9 @@ fn test_auto_release_funds_success_after_7_days() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let artisan = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
 
@@ -678,10 +696,9 @@ fn test_auto_release_funds_fails_before_7_days() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let artisan = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
 
@@ -710,8 +727,9 @@ fn test_auto_release_funds_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
+    let admin = Address::generate(&env);
     let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
+        setup_market_and_registry(&env, admin);
 
     let artisan = Address::generate(&env);
 
@@ -724,10 +742,9 @@ fn test_auto_release_funds_wrong_status() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let artisan = Address::generate(&env);
     let (token_client, _token_admin_client) = create_token(&env, &admin);
 
@@ -756,10 +773,9 @@ fn test_auto_release_funds_wrong_artisan() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let artisan = Address::generate(&env);
     let wrong_artisan = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
@@ -790,10 +806,9 @@ fn test_extend_deadline_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
@@ -814,10 +829,9 @@ fn test_extend_deadline_multiple_times() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
@@ -835,8 +849,9 @@ fn test_extend_deadline_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
+    let admin = Address::generate(&env);
     let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
+        setup_market_and_registry(&env, admin);
 
     let finder = Address::generate(&env);
 
@@ -849,10 +864,9 @@ fn test_extend_deadline_not_owner() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let other = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
@@ -869,10 +883,9 @@ fn test_extend_deadline_cancelled_job() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
@@ -889,10 +902,9 @@ fn test_extend_deadline_completed_job() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let artisan = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&market_id, &500);
@@ -933,10 +945,9 @@ fn test_increase_budget_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
@@ -959,10 +970,9 @@ fn test_increase_budget_multiple_times() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
@@ -983,8 +993,9 @@ fn test_increase_budget_job_not_found() {
     let env = Env::default();
     env.mock_all_auths();
 
+    let admin = Address::generate(&env);
     let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
+        setup_market_and_registry(&env, admin);
 
     let finder = Address::generate(&env);
 
@@ -997,10 +1008,9 @@ fn test_increase_budget_not_owner() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let other = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
@@ -1018,10 +1028,9 @@ fn test_increase_budget_cancelled_job() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let finder = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
@@ -1038,10 +1047,9 @@ fn test_increase_budget_completed_job() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (market_id, market_client, _registry_id, _registry_client) =
-        setup_market_and_registry(&env);
-
     let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
     let artisan = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&market_id, &500);
@@ -1073,4 +1081,53 @@ fn test_increase_budget_completed_job() {
 
     token_admin_client.mint(&seeded_finder, &100);
     market_client.increase_budget(&seeded_finder, &job_id, &100);
+}
+
+// ── transfer_admin tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.transfer_admin(&admin, &new_admin);
+
+    // Verify new admin can transfer again (old admin can no longer)
+    let another_admin = Address::generate(&env);
+    market_client.transfer_admin(&new_admin, &another_admin);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_transfer_admin_wrong_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.transfer_admin(&impostor, &new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Admin not set")]
+fn test_transfer_admin_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(MarketContract, ());
+    let client = MarketContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    client.transfer_admin(&admin, &new_admin);
 }
