@@ -354,7 +354,7 @@ impl MarketContract {
             .get(&DataKey::Job(job_id))
             .expect("Job not found");
 
-        if &job.finder != &caller && job.artisan.as_ref() != Some(&caller) {
+        if job.finder != caller && job.artisan.as_ref() != Some(&caller) {
             panic!("Only the finder or assigned artisan can raise a dispute");
         }
 
