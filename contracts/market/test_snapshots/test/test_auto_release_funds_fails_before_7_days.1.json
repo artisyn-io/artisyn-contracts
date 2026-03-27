@@ -317,6 +317,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "IsPaused"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": false
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "JobCounter"
                             }
                           ]

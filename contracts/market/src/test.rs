@@ -53,10 +53,10 @@ fn test_create_job_transfers_funds_and_returns_id() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(MarketContract, ());
-    let client = MarketContractClient::new(&env, &contract_id);
-
     let admin = Address::generate(&env);
+    let (contract_id, client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
     let finder = Address::generate(&env);
     let (token_client, token_admin_client) = create_token(&env, &admin);
 
@@ -1118,7 +1118,7 @@ fn test_transfer_admin_wrong_caller() {
 }
 
 #[test]
-#[should_panic(expected = "Admin not set")]
+#[should_panic(expected = "Missing storage variable")]
 fn test_transfer_admin_not_initialized() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1130,4 +1130,252 @@ fn test_transfer_admin_not_initialized() {
     let new_admin = Address::generate(&env);
 
     client.transfer_admin(&admin, &new_admin);
+}
+
+// ── toggle_contract_pause tests ──────────────────────────────────────────────
+
+#[test]
+fn test_toggle_contract_pause_pauses() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.toggle_contract_pause(&admin);
+
+    // Verify IsPaused is now true via storage inspection
+    let is_paused: bool = env.as_contract(&market_id, || {
+        env.storage().instance().get(&DataKey::IsPaused).unwrap()
+    });
+    assert!(is_paused);
+}
+
+#[test]
+fn test_toggle_contract_pause_unpauses() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    // Pause then unpause
+    market_client.toggle_contract_pause(&admin);
+    market_client.toggle_contract_pause(&admin);
+
+    let is_paused: bool = env.as_contract(&market_id, || {
+        env.storage().instance().get(&DataKey::IsPaused).unwrap()
+    });
+    assert!(!is_paused);
+}
+
+#[test]
+fn test_toggle_contract_pause_multiple_times() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    for expected in [true, false, true, false] {
+        market_client.toggle_contract_pause(&admin);
+        let is_paused: bool = env.as_contract(&market_id, || {
+            env.storage().instance().get(&DataKey::IsPaused).unwrap()
+        });
+        assert_eq!(is_paused, expected);
+    }
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_toggle_contract_pause_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.toggle_contract_pause(&impostor);
+}
+
+#[test]
+#[should_panic(expected = "Admin not set")]
+fn test_toggle_contract_pause_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(MarketContract, ());
+    let client = MarketContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.toggle_contract_pause(&admin);
+}
+
+// ── pause-gated function tests ───────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_create_job_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.create_job(&finder, &token_client.address, &500);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_assign_artisan_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.assign_artisan(&finder, &1, &artisan);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_apply_for_job_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let artisan = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.apply_for_job(&artisan, &1);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_start_job_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let artisan = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.start_job(&artisan, &1);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_cancel_job_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.cancel_job(&finder, &1);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_complete_job_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let artisan = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.complete_job(&artisan, &1);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_auto_release_funds_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let artisan = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.auto_release_funds(&artisan, &1);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_extend_deadline_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.extend_deadline(&finder, &1, &86400u64);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_increase_budget_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.increase_budget(&finder, &1, &100);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_transfer_admin_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.transfer_admin(&admin, &new_admin);
 }
