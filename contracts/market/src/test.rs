@@ -1513,8 +1513,6 @@ fn test_transfer_admin_blocked_when_paused() {
 
 // ── upgrade tests ─────────────────────────────────────────────────────
 
-const MARKET_WASM: &[u8] = include_bytes!("../../../target/wasm32v1-none/release/market.wasm");
-
 #[test]
 fn test_upgrade_success() {
     let env = Env::default();
@@ -1524,7 +1522,11 @@ fn test_upgrade_success() {
     let (market_id, market_client, _registry_id, _registry_client) =
         setup_market_and_registry(&env, admin.clone());
 
-    let new_wasm_hash = env.deployer().upload_contract_wasm(MARKET_WASM);
+    // In the test environment, contracts are stored with empty-bytes WASM.
+    // Uploading empty bytes yields a hash that is already present in the ledger.
+    let new_wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(soroban_sdk::Bytes::new(&env));
 
     market_client.upgrade(&admin, &new_wasm_hash);
 
