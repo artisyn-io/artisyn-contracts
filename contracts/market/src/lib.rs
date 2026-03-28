@@ -141,6 +141,9 @@ pub struct ContractUpgraded {
 #[contract]
 pub struct MarketContract;
 
+/// Platform fee on confirmed delivery: 1% of escrowed amount (integer division).
+const DELIVERY_FEE_DENOMINATOR: i128 = 100;
+
 pub fn is_paused(env: &Env) -> bool {
     env.storage()
         .instance()
@@ -366,6 +369,51 @@ impl MarketContract {
         JobCompleted {
             id: job_id,
             artisan,
+        }
+        .publish(&env);
+    }
+
+    pub fn confirm_delivery(env: Env, finder: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
+        finder.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.finder != finder {
+            panic!("Not job owner");
+        }
+
+        if job.status != JobStatus::PendingReview {
+            panic!("Job is not pending review");
+        }
+
+        let artisan = job.artisan.clone().expect("Job has no assigned artisan");
+
+        let fee = job.amount / DELIVERY_FEE_DENOMINATOR;
+        let payout = job.amount - fee;
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        let contract = env.current_contract_address();
+        token_client.transfer(&contract, &artisan, &payout);
+        token_client.transfer(&contract, &admin, &fee);
+
+        job.status = JobStatus::Completed;
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        FundsReleased {
+            id: job_id,
+            artisan,
+            amount: payout,
         }
         .publish(&env);
     }
