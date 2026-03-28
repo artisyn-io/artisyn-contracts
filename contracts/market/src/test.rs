@@ -1510,3 +1510,58 @@ fn test_transfer_admin_blocked_when_paused() {
     market_client.toggle_contract_pause(&admin);
     market_client.transfer_admin(&admin, &new_admin);
 }
+
+// ── upgrade tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_upgrade_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    // In the test environment, contracts are stored with empty-bytes WASM.
+    // Uploading empty bytes yields a hash that is already present in the ledger.
+    let new_wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(soroban_sdk::Bytes::new(&env));
+
+    market_client.upgrade(&admin, &new_wasm_hash);
+
+    let events = env.events().all();
+    let market_event_count = events.iter().filter(|e| e.0 == market_id).count();
+    assert!(market_event_count >= 1);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_upgrade_wrong_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+    market_client.upgrade(&impostor, &new_wasm_hash);
+}
+
+#[test]
+#[should_panic(expected = "Admin not set")]
+fn test_upgrade_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(MarketContract, ());
+    let client = MarketContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+    client.upgrade(&admin, &new_wasm_hash);
+}

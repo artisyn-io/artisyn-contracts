@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, token, Address, Env, String,
+    contract, contractevent, contractimpl, contracttype, token, Address, BytesN, Env, String,
 };
 
 mod registry {
@@ -131,6 +131,11 @@ pub struct AdminTransferred {
 #[contractevent]
 pub struct PauseStateChanged {
     pub paused: bool,
+}
+
+#[contractevent]
+pub struct ContractUpgraded {
+    pub hash: BytesN<32>,
 }
 
 #[contract]
@@ -537,6 +542,25 @@ impl MarketContract {
         }
 
         PauseStateChanged { paused }.publish(&env);
+    }
+
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
+        admin.require_auth();
+
+        let current_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
+        ContractUpgraded {
+            hash: new_wasm_hash,
+        }
+        .publish(&env);
     }
 }
 
