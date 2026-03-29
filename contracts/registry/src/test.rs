@@ -393,6 +393,7 @@ fn test_transfer_admin_not_initialized() {
     let new_admin = Address::generate(&env);
     env.mock_all_auths();
 
+    // No initialize() call — should panic
     client.transfer_admin(&admin, &new_admin);
 }
 

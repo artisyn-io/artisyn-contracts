@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{
+    contract, contractevent, contractimpl, contracttype, token, Address, BytesN, Env, String,
+};
 
 mod registry {
     use soroban_sdk::{contractclient, contracttype, Address, Env, String};
@@ -38,12 +40,14 @@ pub struct Job {
     pub id: u64,
     pub finder: Address,
     pub artisan: Option<Address>,
+    pub juror: Option<Address>,
     pub token: Address,
     pub amount: i128,
     pub status: JobStatus,
     pub start_time: u64,
     pub end_time: u64,
     pub deadline: u64,
+    pub dispute_reason: Option<String>,
 }
 
 #[contracttype]
@@ -52,6 +56,8 @@ pub enum DataKey {
     Job(u64),
     JobCounter,
     RegistryContract,
+    Admin,
+    IsPaused,
 }
 
 #[contractevent]
@@ -97,6 +103,12 @@ pub struct FundsReleased {
 }
 
 #[contractevent]
+pub struct DisputeRaised {
+    pub id: u64,
+    pub raised_by: Address,
+}
+
+#[contractevent]
 pub struct DeadlineExtended {
     pub id: u64,
     pub extra_time: u64,
@@ -110,21 +122,53 @@ pub struct BudgetIncreased {
     pub new_amount: i128,
 }
 
+#[contractevent]
+pub struct AdminTransferred {
+    #[topic]
+    pub new_admin: Address,
+}
+
+#[contractevent]
+pub struct PauseStateChanged {
+    pub paused: bool,
+}
+
+#[contractevent]
+pub struct ContractUpgraded {
+    pub hash: BytesN<32>,
+}
+
 #[contract]
 pub struct MarketContract;
 
+/// Platform fee on confirmed delivery: 1% of escrowed amount (integer division).
+const DELIVERY_FEE_DENOMINATOR: i128 = 100;
+
+pub fn is_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::IsPaused)
+        .expect("Missing storage variable")
+}
+
 #[contractimpl]
 impl MarketContract {
-    pub fn initialize(env: Env, registry_contract: Address) {
+    pub fn initialize(env: Env, registry_contract: Address, admin: &Address) {
         if env.storage().instance().has(&DataKey::RegistryContract) {
-            panic!("Already initialized");
+            panic!("Registry already initialized");
+        }
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic!("Admin already initialized");
         }
         env.storage()
             .instance()
             .set(&DataKey::RegistryContract, &registry_contract);
+        env.storage().instance().set(&DataKey::Admin, admin);
+        env.storage().instance().set(&DataKey::IsPaused, &false);
     }
 
     pub fn create_job(env: Env, finder: Address, token: Address, amount: i128) -> u64 {
+        assert!(!is_paused(&env), "Contract Paused");
         finder.require_auth();
 
         let token_client = token::TokenClient::new(&env, &token);
@@ -142,12 +186,14 @@ impl MarketContract {
             id,
             finder,
             artisan: None,
+            juror: None,
             token,
             amount,
             status: JobStatus::Open,
             start_time: 0,
             end_time: 0,
             deadline: 0,
+            dispute_reason: None,
         };
         env.storage().persistent().set(&DataKey::Job(id), &job);
 
@@ -157,6 +203,7 @@ impl MarketContract {
     }
 
     pub fn assign_artisan(env: Env, finder: Address, job_id: u64, artisan: Address) {
+        assert!(!is_paused(&env), "Contract Paused");
         let registry_contract: Address = env
             .storage()
             .instance()
@@ -202,6 +249,7 @@ impl MarketContract {
     }
 
     pub fn apply_for_job(env: Env, artisan: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
         artisan.require_auth();
 
         let registry_contract: Address = env
@@ -238,6 +286,7 @@ impl MarketContract {
     }
 
     pub fn start_job(env: Env, artisan: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
         artisan.require_auth();
 
         let mut job: Job = env
@@ -267,6 +316,7 @@ impl MarketContract {
     }
 
     pub fn cancel_job(env: Env, finder: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
         finder.require_auth();
 
         let mut job: Job = env
@@ -294,6 +344,7 @@ impl MarketContract {
     }
 
     pub fn complete_job(env: Env, artisan: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
         artisan.require_auth();
 
         let mut job: Job = env
@@ -322,7 +373,80 @@ impl MarketContract {
         .publish(&env);
     }
 
+    pub fn confirm_delivery(env: Env, finder: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
+        finder.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.finder != finder {
+            panic!("Not job owner");
+        }
+
+        if job.status != JobStatus::PendingReview {
+            panic!("Job is not pending review");
+        }
+
+        let artisan = job.artisan.clone().expect("Job has no assigned artisan");
+
+        let fee = job.amount / DELIVERY_FEE_DENOMINATOR;
+        let payout = job.amount - fee;
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        let contract = env.current_contract_address();
+        token_client.transfer(&contract, &artisan, &payout);
+        token_client.transfer(&contract, &admin, &fee);
+
+        job.status = JobStatus::Completed;
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        FundsReleased {
+            id: job_id,
+            artisan,
+            amount: payout,
+        }
+        .publish(&env);
+    }
+
+    pub fn raise_dispute(env: Env, caller: Address, job_id: u64) {
+        caller.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.finder != caller && job.artisan.as_ref() != Some(&caller) {
+            panic!("Only the finder or assigned artisan can raise a dispute");
+        }
+
+        if job.status != JobStatus::InProgress && job.status != JobStatus::PendingReview {
+            panic!("Job cannot be disputed in its current status");
+        }
+
+        job.status = JobStatus::Disputed;
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        DisputeRaised {
+            id: job_id,
+            raised_by: caller,
+        }
+        .publish(&env);
+    }
+
     pub fn auto_release_funds(env: Env, artisan: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
         artisan.require_auth();
 
         let mut job: Job = env
@@ -363,6 +487,7 @@ impl MarketContract {
     }
 
     pub fn extend_deadline(env: Env, finder: Address, job_id: u64, extra_time: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
         finder.require_auth();
 
         let mut job: Job = env
@@ -392,6 +517,7 @@ impl MarketContract {
     }
 
     pub fn increase_budget(env: Env, finder: Address, job_id: u64, added_amount: i128) {
+        assert!(!is_paused(&env), "Contract Paused");
         finder.require_auth();
 
         let mut job: Job = env
@@ -419,6 +545,68 @@ impl MarketContract {
             id: job_id,
             added_amount,
             new_amount: job.amount,
+        }
+        .publish(&env);
+    }
+
+    pub fn transfer_admin(env: Env, old_admin: Address, new_admin: Address) {
+        assert!(!is_paused(&env), "Contract Paused");
+        old_admin.require_auth();
+
+        let current_admin = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+        assert!(old_admin == current_admin, "Unauthorized caller");
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+
+        AdminTransferred { new_admin }.publish(&env);
+    }
+
+    pub fn toggle_contract_pause(env: Env, admin: Address) {
+        admin.require_auth();
+
+        let current_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        let mut paused = env
+            .storage()
+            .instance()
+            .get(&DataKey::IsPaused)
+            .expect("Pause state not set");
+
+        if paused {
+            env.storage().instance().set(&DataKey::IsPaused, &false);
+            paused = false;
+        } else {
+            env.storage().instance().set(&DataKey::IsPaused, &true);
+            paused = true;
+        }
+
+        PauseStateChanged { paused }.publish(&env);
+    }
+
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
+        admin.require_auth();
+
+        let current_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
+        ContractUpgraded {
+            hash: new_wasm_hash,
         }
         .publish(&env);
     }
