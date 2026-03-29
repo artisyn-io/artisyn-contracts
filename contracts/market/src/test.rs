@@ -1636,6 +1636,87 @@ fn test_transfer_admin_blocked_when_paused() {
     market_client.transfer_admin(&admin, &new_admin);
 }
 
+// ── emergency_withdraw tests ─────────────────────────────────────────────────
+
+#[test]
+fn test_emergency_withdraw_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _, _) = setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let rescue_target = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    market_client.create_job(&finder, &token_client.address, &500);
+
+    assert_eq!(token_client.balance(&market_id), 500);
+    assert_eq!(token_client.balance(&rescue_target), 0);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.emergency_withdraw(&admin, &token_client.address, &500, &rescue_target);
+
+    assert_eq!(token_client.balance(&market_id), 0);
+    assert_eq!(token_client.balance(&rescue_target), 500);
+}
+
+#[test]
+fn test_emergency_withdraw_partial_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _, _) = setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let rescue_target = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    market_client.create_job(&finder, &token_client.address, &500);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.emergency_withdraw(&admin, &token_client.address, &200, &rescue_target);
+
+    assert_eq!(token_client.balance(&market_id), 300);
+    assert_eq!(token_client.balance(&rescue_target), 200);
+}
+
+#[test]
+#[should_panic(expected = "Contract is not paused")]
+fn test_emergency_withdraw_fails_when_not_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, market_client, _, _) = setup_market_and_registry(&env, admin.clone());
+
+    let rescue_target = Address::generate(&env);
+    let (token_client, _) = create_token(&env, &admin);
+
+    market_client.emergency_withdraw(&admin, &token_client.address, &100, &rescue_target);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_emergency_withdraw_fails_for_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let (_, market_client, _, _) = setup_market_and_registry(&env, admin.clone());
+
+    let rescue_target = Address::generate(&env);
+    let (token_client, _) = create_token(&env, &admin);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.emergency_withdraw(&impostor, &token_client.address, &100, &rescue_target);
+}
+
 // ── upgrade tests ─────────────────────────────────────────────────────
 
 #[test]
