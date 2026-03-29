@@ -627,6 +627,115 @@ fn test_complete_job_wrong_status() {
 }
 
 #[test]
+fn test_confirm_delivery_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+    market_client.complete_job(&artisan, &job_id);
+
+    assert_eq!(token_client.balance(&market_id), 500);
+    assert_eq!(token_client.balance(&artisan), 0);
+    assert_eq!(token_client.balance(&admin), 0);
+
+    market_client.confirm_delivery(&finder, &job_id);
+
+    // 1% fee on 500 => 5 to admin, 495 to artisan
+    assert_eq!(token_client.balance(&artisan), 495);
+    assert_eq!(token_client.balance(&admin), 5);
+    assert_eq!(token_client.balance(&market_id), 0);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.status, JobStatus::Completed);
+}
+
+#[test]
+#[should_panic(expected = "Job not found")]
+fn test_confirm_delivery_job_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, market_client, _, _) = setup_market_and_registry(&env, admin);
+    let finder = Address::generate(&env);
+
+    market_client.confirm_delivery(&finder, &999);
+}
+
+#[test]
+#[should_panic(expected = "Not job owner")]
+fn test_confirm_delivery_not_finder() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+    let finder = Address::generate(&env);
+    let other = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+    market_client.complete_job(&artisan, &job_id);
+
+    market_client.confirm_delivery(&other, &job_id);
+}
+
+#[test]
+#[should_panic(expected = "Job is not pending review")]
+fn test_confirm_delivery_wrong_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+
+    market_client.confirm_delivery(&finder, &job_id);
+}
+
+#[test]
 fn test_raise_dispute_success_from_in_progress_by_finder() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1450,6 +1559,22 @@ fn test_complete_job_blocked_when_paused() {
 
 #[test]
 #[should_panic(expected = "Contract Paused")]
+fn test_confirm_delivery_blocked_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.confirm_delivery(&finder, &1);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
 fn test_auto_release_funds_blocked_when_paused() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1590,4 +1715,59 @@ fn test_emergency_withdraw_fails_for_non_admin() {
 
     market_client.toggle_contract_pause(&admin);
     market_client.emergency_withdraw(&impostor, &token_client.address, &100, &rescue_target);
+}
+
+// ── upgrade tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_upgrade_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    // In the test environment, contracts are stored with empty-bytes WASM.
+    // Uploading empty bytes yields a hash that is already present in the ledger.
+    let new_wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(soroban_sdk::Bytes::new(&env));
+
+    market_client.upgrade(&admin, &new_wasm_hash);
+
+    let events = env.events().all();
+    let market_event_count = events.iter().filter(|e| e.0 == market_id).count();
+    assert!(market_event_count >= 1);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_upgrade_wrong_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+    market_client.upgrade(&impostor, &new_wasm_hash);
+}
+
+#[test]
+#[should_panic(expected = "Admin not set")]
+fn test_upgrade_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(MarketContract, ());
+    let client = MarketContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+    client.upgrade(&admin, &new_wasm_hash);
 }

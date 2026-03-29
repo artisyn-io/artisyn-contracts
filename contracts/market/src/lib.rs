@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, token, Address, Env, String,
+    contract, contractevent, contractimpl, contracttype, token, Address, BytesN, Env, String,
 };
 
 mod registry {
@@ -140,8 +140,16 @@ pub struct EmergencyWithdraw {
     pub to: Address,
 }
 
+#[contractevent]
+pub struct ContractUpgraded {
+    pub hash: BytesN<32>,
+}
+
 #[contract]
 pub struct MarketContract;
+
+/// Platform fee on confirmed delivery: 1% of escrowed amount (integer division).
+const DELIVERY_FEE_DENOMINATOR: i128 = 100;
 
 pub fn is_paused(env: &Env) -> bool {
     env.storage()
@@ -372,6 +380,51 @@ impl MarketContract {
         .publish(&env);
     }
 
+    pub fn confirm_delivery(env: Env, finder: Address, job_id: u64) {
+        assert!(!is_paused(&env), "Contract Paused");
+        finder.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        if job.finder != finder {
+            panic!("Not job owner");
+        }
+
+        if job.status != JobStatus::PendingReview {
+            panic!("Job is not pending review");
+        }
+
+        let artisan = job.artisan.clone().expect("Job has no assigned artisan");
+
+        let fee = job.amount / DELIVERY_FEE_DENOMINATOR;
+        let payout = job.amount - fee;
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        let contract = env.current_contract_address();
+        token_client.transfer(&contract, &artisan, &payout);
+        token_client.transfer(&contract, &admin, &fee);
+
+        job.status = JobStatus::Completed;
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        FundsReleased {
+            id: job_id,
+            artisan,
+            amount: payout,
+        }
+        .publish(&env);
+    }
+
     pub fn raise_dispute(env: Env, caller: Address, job_id: u64) {
         caller.require_auth();
 
@@ -562,6 +615,25 @@ impl MarketContract {
         token_client.transfer(&env.current_contract_address(), &to, &amount);
 
         EmergencyWithdraw { token, amount, to }.publish(&env);
+    }
+
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
+        admin.require_auth();
+
+        let current_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
+        ContractUpgraded {
+            hash: new_wasm_hash,
+        }
+        .publish(&env);
     }
 }
 
