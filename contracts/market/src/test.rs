@@ -1771,3 +1771,85 @@ fn test_upgrade_not_initialized() {
 
     client.upgrade(&admin, &new_wasm_hash);
 }
+
+// ── set_platform_fee tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_set_platform_fee_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.set_platform_fee(&admin, &100);
+}
+
+#[test]
+fn test_set_platform_fee_at_hardcap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    // Exactly 1000 bps (10%) should be allowed
+    market_client.set_platform_fee(&admin, &1000);
+}
+
+#[test]
+#[should_panic(expected = "Fee exceeds maximum allowed (1000 bps)")]
+fn test_set_platform_fee_exceeds_hardcap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.set_platform_fee(&admin, &1001);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized caller")]
+fn test_set_platform_fee_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.set_platform_fee(&impostor, &100);
+}
+
+#[test]
+#[should_panic(expected = "Admin not set")]
+fn test_set_platform_fee_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(MarketContract, ());
+    let client = MarketContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_platform_fee(&admin, &100);
+}
+
+#[test]
+fn test_set_platform_fee_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    market_client.set_platform_fee(&admin, &250);
+
+    let events = env.events().all();
+    assert!(!events.is_empty());
+}
