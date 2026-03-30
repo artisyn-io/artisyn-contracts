@@ -58,6 +58,7 @@ pub enum DataKey {
     RegistryContract,
     Admin,
     IsPaused,
+    PlatformFee,
 }
 
 #[contractevent]
@@ -143,6 +144,11 @@ pub struct EmergencyWithdraw {
 #[contractevent]
 pub struct ContractUpgraded {
     pub hash: BytesN<32>,
+}
+
+#[contractevent]
+pub struct FeeUpdated {
+    pub new_fee_bps: u32,
 }
 
 #[contract]
@@ -634,6 +640,23 @@ impl MarketContract {
             hash: new_wasm_hash,
         }
         .publish(&env);
+    }
+
+    pub fn set_platform_fee(env: Env, admin: Address, fee_bps: u32) {
+        admin.require_auth();
+
+        let current_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        assert!(fee_bps <= 1000, "Fee exceeds maximum allowed (1000 bps)");
+
+        env.storage().instance().set(&DataKey::PlatformFee, &fee_bps);
+
+        FeeUpdated { new_fee_bps: fee_bps }.publish(&env);
     }
 }
 
