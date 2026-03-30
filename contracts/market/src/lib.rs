@@ -654,9 +654,14 @@ impl MarketContract {
 
         assert!(fee_bps <= 1000, "Fee exceeds maximum allowed (1000 bps)");
 
-        env.storage().instance().set(&DataKey::PlatformFee, &fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFee, &fee_bps);
 
-        FeeUpdated { new_fee_bps: fee_bps }.publish(&env);
+        FeeUpdated {
+            new_fee_bps: fee_bps,
+        }
+        .publish(&env);
     }
 }
 
