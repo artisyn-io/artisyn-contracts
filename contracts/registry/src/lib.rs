@@ -64,23 +64,31 @@ pub struct AdminTransferred {
 pub struct Registry;
 
 fn read_profile(env: &Env, user: &Address) -> Option<Profile> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Profile(user.clone()))
+    let key = DataKey::Profile(user.clone());
+    let profile = env.storage().persistent().get(&key);
+    if profile.is_some() {
+        env.storage().persistent().extend_ttl(&key, 100_000, 500_000);
+    }
+    profile
 }
 
 fn write_profile(env: &Env, user: &Address, profile: &Profile) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Profile(user.clone()), profile);
+    let key = DataKey::Profile(user.clone());
+    env.storage().persistent().set(&key, profile);
+    env.storage().persistent().extend_ttl(&key, 100_000, 500_000);
 }
 
 fn read_admin(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::Admin)
+    let admin = env.storage().instance().get(&DataKey::Admin);
+    if admin.is_some() {
+        env.storage().instance().extend_ttl(100_000, 500_000);
+    }
+    admin
 }
 
 fn write_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
+    env.storage().instance().extend_ttl(100_000, 500_000);
 }
 
 #[contractimpl]
