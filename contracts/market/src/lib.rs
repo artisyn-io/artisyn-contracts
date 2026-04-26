@@ -164,10 +164,13 @@ pub struct MarketContract;
 const DELIVERY_FEE_DENOMINATOR: i128 = 100;
 
 pub fn is_paused(env: &Env) -> bool {
-    env.storage()
+    let paused = env
+        .storage()
         .instance()
         .get(&DataKey::IsPaused)
-        .expect("Missing storage variable")
+        .expect("Missing storage variable");
+    env.storage().instance().extend_ttl(100_000, 500_000);
+    paused
 }
 
 #[contractimpl]
@@ -200,6 +203,7 @@ impl MarketContract {
             .unwrap_or(0);
         let id = counter + 1;
         env.storage().instance().set(&DataKey::JobCounter, &id);
+        env.storage().instance().extend_ttl(100_000, 500_000);
 
         let job = Job {
             id,
@@ -215,6 +219,9 @@ impl MarketContract {
             dispute_reason: None,
         };
         env.storage().persistent().set(&DataKey::Job(id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(id), 100_000, 500_000);
 
         JobCreated { id, amount }.publish(&env);
 
@@ -259,6 +266,9 @@ impl MarketContract {
         job.status = JobStatus::Assigned;
 
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         JobAssigned {
             id: job_id,
@@ -282,6 +292,9 @@ impl MarketContract {
             .persistent()
             .get(&DataKey::Job(job_id))
             .expect("Job not found");
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         if job.status != JobStatus::Open {
             panic!("Job is not open");
@@ -326,6 +339,9 @@ impl MarketContract {
         job.start_time = env.ledger().timestamp();
 
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         JobStarted {
             id: job_id,
@@ -358,6 +374,9 @@ impl MarketContract {
         job.status = JobStatus::Cancelled;
 
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         JobCancelled { id: job_id }.publish(&env);
     }
@@ -384,6 +403,9 @@ impl MarketContract {
         job.end_time = env.ledger().timestamp();
 
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         JobCompleted {
             id: job_id,
@@ -428,6 +450,9 @@ impl MarketContract {
 
         job.status = JobStatus::Completed;
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         FundsReleased {
             id: job_id,
@@ -456,6 +481,9 @@ impl MarketContract {
 
         job.status = JobStatus::Disputed;
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         DisputeRaised {
             id: job_id,
@@ -496,6 +524,9 @@ impl MarketContract {
 
         job.status = JobStatus::Completed;
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         FundsReleased {
             id: job_id,
@@ -526,6 +557,9 @@ impl MarketContract {
         job.deadline += extra_time;
 
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         DeadlineExtended {
             id: job_id,
@@ -559,6 +593,9 @@ impl MarketContract {
         job.amount += added_amount;
 
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         BudgetIncreased {
             id: job_id,
@@ -701,6 +738,9 @@ impl MarketContract {
 
         job.juror = Some(juror.clone());
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         JurorAssigned { id: job_id, juror }.publish(&env);
     }
