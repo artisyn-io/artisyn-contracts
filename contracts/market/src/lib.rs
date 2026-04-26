@@ -110,6 +110,13 @@ pub struct DisputeRaised {
 }
 
 #[contractevent]
+pub struct DisputeResolved {
+    pub id: u64,
+    pub finder_share: i128,
+    pub artisan_share: i128,
+}
+
+#[contractevent]
 pub struct DeadlineExtended {
     pub id: u64,
     pub extra_time: u64,
@@ -743,6 +750,63 @@ impl MarketContract {
             .extend_ttl(&DataKey::Job(job_id), 100_000, 500_000);
 
         JurorAssigned { id: job_id, juror }.publish(&env);
+    }
+
+    pub fn resolve_dispute(
+        env: Env,
+        juror: Address,
+        job_id: u64,
+        finder_share: i128,
+        artisan_share: i128,
+    ) {
+        juror.require_auth();
+
+        let mut job: Job = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found");
+
+        assert!(job.status == JobStatus::Disputed, "Job is not disputed");
+        assert!(job.juror == Some(juror.clone()), "Not assigned juror");
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+
+        let fee = job.amount / DELIVERY_FEE_DENOMINATOR;
+        assert!(
+            finder_share + artisan_share + fee == job.amount,
+            "Invalid shares"
+        );
+
+        let token_client = token::TokenClient::new(&env, &job.token);
+        let contract = env.current_contract_address();
+
+        if finder_share > 0 {
+            token_client.transfer(&contract, &job.finder, &finder_share);
+        }
+
+        if artisan_share > 0 {
+            let artisan = job.artisan.clone().expect("Job has no assigned artisan");
+            token_client.transfer(&contract, &artisan, &artisan_share);
+        }
+
+        if fee > 0 {
+            token_client.transfer(&contract, &admin, &fee);
+        }
+
+        job.status = JobStatus::Completed;
+        env.storage().persistent().set(&DataKey::Job(job_id), &job);
+
+        DisputeResolved {
+            id: job_id,
+            finder_share,
+            artisan_share,
+        }
+        .publish(&env);
     }
 }
 

@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env, String};
+use soroban_sdk::{
+    contract, contractevent, contractimpl, contracttype, Address, BytesN, Env, String,
+};
 
 pub const ROLE_FINDER: u32 = 0;
 pub const ROLE_CURATOR: u32 = 1;
@@ -58,6 +60,11 @@ pub struct ApplicationReceived {
 pub struct AdminTransferred {
     #[topic]
     pub new_admin: Address,
+}
+
+#[contractevent]
+pub struct ContractUpgraded {
+    pub hash: BytesN<32>,
 }
 
 #[contract]
@@ -243,6 +250,21 @@ impl Registry {
         write_admin(&env, &new_admin);
 
         AdminTransferred { new_admin }.publish(&env);
+    }
+
+    pub fn upgrade_contract_code(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
+        admin.require_auth();
+
+        let current_admin = read_admin(&env).expect("No current admin");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
+        ContractUpgraded {
+            hash: new_wasm_hash,
+        }
+        .publish(&env);
     }
 }
 
