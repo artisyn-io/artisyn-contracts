@@ -167,7 +167,6 @@ pub struct JurorAssigned {
 #[contract]
 pub struct MarketContract;
 
-
 pub fn is_paused(env: &Env) -> bool {
     let paused = env
         .storage()
