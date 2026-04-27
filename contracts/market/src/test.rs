@@ -924,7 +924,9 @@ fn test_auto_release_funds_success_after_7_days() {
 
     market_client.auto_release_funds(&artisan, &job_id);
 
-    assert_eq!(token_client.balance(&artisan), 500);
+    // 1% of 500 = 5. So artisan gets 495, admin gets 5.
+    assert_eq!(token_client.balance(&artisan), 495);
+    assert_eq!(token_client.balance(&admin), 5);
     assert_eq!(token_client.balance(&market_id), 0);
 }
 
@@ -2008,4 +2010,39 @@ fn test_assign_juror_not_curator() {
     seed_artisan_profile(&env, &registry_id, &juror, 3); // Artisan role, not Curator
 
     market_client.assign_juror(&admin, &job_id, &juror);
+}
+
+#[test]
+fn test_fee_math_500_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    // Set Platform Fee to 500 BPS (5%)
+    market_client.set_platform_fee(&admin, &500);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &1000);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+    market_client.complete_job(&artisan, &job_id);
+
+    market_client.confirm_delivery(&finder, &job_id);
+
+    // 5% fee on 1000 => 50 to admin, 950 to artisan
+    assert_eq!(token_client.balance(&artisan), 950);
+    assert_eq!(token_client.balance(&admin), 50);
+    assert_eq!(token_client.balance(&market_id), 0);
 }
