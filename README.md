@@ -16,3 +16,11 @@ Many artisans lack a platform to help them get noticed; meanwhile, numerous peop
 ## Contribution Guide
 
 To contribute to this project, check out the available issues, find one you can resolve, make something awesome and open a pull request.
+
+## 💰 Bounty Contribution
+
+- **Task:** [QA] Unit Test: Platform Fees and Admin Payouts
+- **Reward:** $1000
+- **Source:** GitHub-Paid
+- **Date:** 2026-04-27
+
