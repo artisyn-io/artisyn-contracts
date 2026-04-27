@@ -167,8 +167,6 @@ pub struct JurorAssigned {
 #[contract]
 pub struct MarketContract;
 
-/// Platform fee on confirmed delivery: 1% of escrowed amount (integer division).
-const DELIVERY_FEE_DENOMINATOR: i128 = 100;
 
 pub fn is_paused(env: &Env) -> bool {
     let paused = env
@@ -447,7 +445,12 @@ impl MarketContract {
 
         let artisan = job.artisan.clone().expect("Job has no assigned artisan");
 
-        let fee = job.amount / DELIVERY_FEE_DENOMINATOR;
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformFee)
+            .unwrap_or(100);
+        let fee = (job.amount * (fee_bps as i128)) / 10000;
         let payout = job.amount - fee;
 
         let token_client = token::TokenClient::new(&env, &job.token);
@@ -526,8 +529,26 @@ impl MarketContract {
             panic!("7 days have not passed since job completion");
         }
 
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Admin not set");
+
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformFee)
+            .unwrap_or(100);
+        let fee = (job.amount * (fee_bps as i128)) / 10000;
+        let payout = job.amount - fee;
+
         let token_client = token::TokenClient::new(&env, &job.token);
-        token_client.transfer(&env.current_contract_address(), &artisan, &job.amount);
+        let contract = env.current_contract_address();
+        token_client.transfer(&contract, &artisan, &payout);
+        if fee > 0 {
+            token_client.transfer(&contract, &admin, &fee);
+        }
 
         job.status = JobStatus::Completed;
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
@@ -538,7 +559,7 @@ impl MarketContract {
         FundsReleased {
             id: job_id,
             artisan,
-            amount: job.amount,
+            amount: payout,
         }
         .publish(&env);
     }
@@ -776,7 +797,12 @@ impl MarketContract {
             .get(&DataKey::Admin)
             .expect("Admin not set");
 
-        let fee = job.amount / DELIVERY_FEE_DENOMINATOR;
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformFee)
+            .unwrap_or(100);
+        let fee = (job.amount * (fee_bps as i128)) / 10000;
         assert!(
             finder_share + artisan_share + fee == job.amount,
             "Invalid shares"
