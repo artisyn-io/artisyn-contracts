@@ -2221,4 +2221,3 @@ fn test_circuit_breaker_admin_functions_work_during_pause() {
     token_admin_client.mint(&finder, &500);
     let _job_id = market_client.create_job(&finder, &token_client.address, &300);
 }
-
