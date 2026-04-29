@@ -2046,3 +2046,179 @@ fn test_fee_math_500_bps() {
     assert_eq!(token_client.balance(&admin), 50);
     assert_eq!(token_client.balance(&market_id), 0);
 }
+
+// ── circuit breaker integration tests ───────────────────────────────────────
+
+#[test]
+fn test_circuit_breaker_full_flow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let rescue_target = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &2000);
+
+    // Step 1: Normal operations work before pause
+    let _job_id = market_client.create_job(&finder, &token_client.address, &500);
+    assert_eq!(token_client.balance(&market_id), 500);
+
+    // Step 2: Pause the contract
+    market_client.toggle_contract_pause(&admin);
+
+    // Step 3: Emergency withdraw succeeds while paused
+    market_client.emergency_withdraw(&admin, &token_client.address, &500, &rescue_target);
+    assert_eq!(token_client.balance(&market_id), 0);
+    assert_eq!(token_client.balance(&rescue_target), 500);
+
+    // Step 4: Unpause the contract
+    market_client.toggle_contract_pause(&admin);
+
+    // Step 5: Verify normal operations work again after unpause
+    let job_id_2 = market_client.create_job(&finder, &token_client.address, &400);
+    assert_eq!(token_client.balance(&market_id), 400);
+    market_client.assign_artisan(&finder, &job_id_2, &artisan);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_circuit_breaker_create_job_blocked_during_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.create_job(&finder, &token_client.address, &500);
+}
+
+#[test]
+#[should_panic(expected = "Contract Paused")]
+fn test_circuit_breaker_confirm_delivery_blocked_during_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+    market_client.complete_job(&artisan, &job_id);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.confirm_delivery(&finder, &job_id);
+}
+
+#[test]
+fn test_circuit_breaker_emergency_withdraw_succeeds_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let rescue_target = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    market_client.create_job(&finder, &token_client.address, &500);
+    assert_eq!(token_client.balance(&market_id), 500);
+
+    market_client.toggle_contract_pause(&admin);
+    market_client.emergency_withdraw(&admin, &token_client.address, &500, &rescue_target);
+
+    assert_eq!(token_client.balance(&market_id), 0);
+    assert_eq!(token_client.balance(&rescue_target), 500);
+}
+
+#[test]
+fn test_circuit_breaker_unpause_restores_operations() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &2000);
+
+    // Pause and unpause
+    market_client.toggle_contract_pause(&admin);
+    market_client.toggle_contract_pause(&admin);
+
+    // All operations should work after unpause
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    assert_eq!(token_client.balance(&market_id), 500);
+
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+    market_client.complete_job(&artisan, &job_id);
+    market_client.confirm_delivery(&finder, &job_id);
+}
+
+#[test]
+fn test_circuit_breaker_admin_functions_work_during_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let rescue_target = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    market_client.create_job(&finder, &token_client.address, &500);
+
+    // Pause the contract
+    market_client.toggle_contract_pause(&admin);
+
+    // Emergency withdraw works during pause
+    market_client.emergency_withdraw(&admin, &token_client.address, &500, &rescue_target);
+    assert_eq!(token_client.balance(&rescue_target), 500);
+
+    // Toggle pause works (to unpause)
+    market_client.toggle_contract_pause(&admin);
+
+    // Verify contract is unpaused by creating a job
+    token_admin_client.mint(&finder, &500);
+    let _job_id = market_client.create_job(&finder, &token_client.address, &300);
+}
+
