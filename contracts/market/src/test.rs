@@ -2221,3 +2221,218 @@ fn test_circuit_breaker_admin_functions_work_during_pause() {
     token_admin_client.mint(&finder, &500);
     let _job_id = market_client.create_job(&finder, &token_client.address, &300);
 }
+
+// ── auto_release_funds time-travel integration tests ────────────────────────
+
+#[test]
+fn test_auto_release_time_travel_full_flow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    // Step 1: Create and complete a job
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    // Set initial timestamp
+    let completion_time = 1000u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time;
+    });
+
+    market_client.complete_job(&artisan, &job_id);
+
+    // Verify job is in PendingReview status
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.status, JobStatus::PendingReview);
+    assert_eq!(job.end_time, completion_time);
+
+    // Step 2: Fast forward to 8 days after completion
+    let eight_days = 8 * 24 * 60 * 60; // 691200 seconds
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time + eight_days;
+    });
+
+    assert_eq!(token_client.balance(&artisan), 0);
+    assert_eq!(token_client.balance(&market_id), 500);
+
+    // Step 3: Auto-release succeeds after 8 days
+    market_client.auto_release_funds(&artisan, &job_id);
+
+    // Verify funds were released (1% fee = 5, artisan gets 495)
+    assert_eq!(token_client.balance(&artisan), 495);
+    assert_eq!(token_client.balance(&admin), 5);
+    assert_eq!(token_client.balance(&market_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "7 days have not passed since job completion")]
+fn test_auto_release_time_travel_immediate_attempt_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    let completion_time = 1000u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time;
+    });
+
+    market_client.complete_job(&artisan, &job_id);
+
+    // Attempt auto_release immediately (0 seconds after completion)
+    market_client.auto_release_funds(&artisan, &job_id);
+}
+
+#[test]
+#[should_panic(expected = "7 days have not passed since job completion")]
+fn test_auto_release_time_travel_six_days_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    let completion_time = 1000u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time;
+    });
+
+    market_client.complete_job(&artisan, &job_id);
+
+    // Fast forward 6 days (still too early)
+    let six_days = 6 * 24 * 60 * 60; // 518400 seconds
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time + six_days;
+    });
+
+    market_client.auto_release_funds(&artisan, &job_id);
+}
+
+#[test]
+fn test_auto_release_time_travel_exactly_7_days_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    let completion_time = 1000u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time;
+    });
+
+    market_client.complete_job(&artisan, &job_id);
+
+    // Fast forward exactly 7 days + 1 second (minimum required)
+    let seven_days_plus_one = 7 * 24 * 60 * 60 + 1; // 604801 seconds
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time + seven_days_plus_one;
+    });
+
+    assert_eq!(token_client.balance(&artisan), 0);
+
+    market_client.auto_release_funds(&artisan, &job_id);
+
+    assert_eq!(token_client.balance(&artisan), 495);
+}
+
+#[test]
+#[should_panic(expected = "7 days have not passed since job completion")]
+fn test_auto_release_time_travel_exactly_7_days_minus_one_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    let completion_time = 1000u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time;
+    });
+
+    market_client.complete_job(&artisan, &job_id);
+
+    // Fast forward exactly 7 days (604800 seconds) - should still fail
+    let exactly_seven_days = 7 * 24 * 60 * 60; // 604800 seconds
+    env.ledger().with_mut(|li| {
+        li.timestamp = completion_time + exactly_seven_days;
+    });
+
+    market_client.auto_release_funds(&artisan, &job_id);
+}
