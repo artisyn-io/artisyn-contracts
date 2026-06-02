@@ -2436,3 +2436,170 @@ fn test_auto_release_time_travel_exactly_7_days_minus_one_fails() {
 
     market_client.auto_release_funds(&artisan, &job_id);
 }
+
+// ── cross-contract E2E tests ─────────────────────────────────────────────────
+
+#[test]
+fn test_e2e_cross_contract_full_user_journey() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    // Initialize Registry
+    registry_client.initialize(&admin);
+
+    // Admin must register themselves to have a profile
+    registry_client.register_user(&admin, &String::from_str(&env, "ipfs://admin"));
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    // Step 1: Create a job in Market
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    // Step 2: Register user in Registry as Finder (role 0)
+    registry_client.register_user(&artisan, &String::from_str(&env, "ipfs://metadata"));
+
+    // Verify user is registered but not yet an Artisan
+    let profile = registry_client.get_profile(&artisan);
+    assert_eq!(profile.role, 0); // ROLE_FINDER
+    assert!(!profile.is_verified);
+
+    // Step 3: Admin promotes user to Artisan
+    // Note: Admin is registered as ROLE_FINDER (0) but approve_artisan checks for ROLE_ADMIN (2)
+    // We need to manually set admin's role to ROLE_ADMIN for this to work
+    env.as_contract(&registry_id, || {
+        use soroban_sdk::String;
+        let admin_profile = ::registry::Profile {
+            role: 2, // ROLE_ADMIN
+            metadata_hash: String::from_str(&env, "ipfs://admin"),
+            is_verified: false,
+            is_blacklisted: false,
+        };
+        env.storage()
+            .persistent()
+            .set(&::registry::DataKey::Profile(admin.clone()), &admin_profile);
+    });
+
+    registry_client.approve_artisan(&admin, &artisan);
+
+    // Verify user is now an Artisan
+    let profile = registry_client.get_profile(&artisan);
+    assert_eq!(profile.role, 3); // ROLE_ARTISAN
+    assert!(profile.is_verified);
+
+    // Step 4: Successfully assign Artisan in Market
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+
+    // Verify job was assigned
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.artisan, Some(artisan.clone()));
+    assert_eq!(job.status, JobStatus::Assigned);
+}
+
+#[test]
+#[should_panic(expected = "User not found")]
+fn test_e2e_cross_contract_unregistered_user_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let unregistered_artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    // Attempt to assign unregistered user - should panic with "User not found"
+    market_client.assign_artisan(&finder, &job_id, &unregistered_artisan);
+}
+
+#[test]
+#[should_panic(expected = "User is not a verified Artisan")]
+fn test_e2e_cross_contract_finder_cannot_be_assigned() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let registered_finder = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    // Register user as Finder
+    registry_client.register_user(
+        &registered_finder,
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+
+    // Attempt to assign Finder (role 0) - should panic
+    market_client.assign_artisan(&finder, &job_id, &registered_finder);
+}
+
+#[test]
+fn test_e2e_cross_contract_curator_workflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, _registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let curator = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    // Register curator and artisan
+    registry_client.register_user(&curator, &String::from_str(&env, "ipfs://curator"));
+    registry_client.register_user(&artisan, &String::from_str(&env, "ipfs://artisan"));
+
+    // Admin promotes curator
+    registry_client.add_curator(&curator);
+
+    // Curator approves artisan
+    registry_client.approve_artisan(&curator, &artisan);
+
+    // Verify artisan can be assigned in Market
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.artisan, Some(artisan));
+    assert_eq!(job.status, JobStatus::Assigned);
+}
