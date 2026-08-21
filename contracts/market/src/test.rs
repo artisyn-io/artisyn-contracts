@@ -2,7 +2,7 @@ use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     token::{StellarAssetClient, TokenClient},
-    Address, Env,
+    Address, Env, TryIntoVal,
 };
 
 fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, StellarAssetClient<'a>) {
@@ -2159,7 +2159,7 @@ fn create_disputed_job(
     registry_id: &Address,
     registry_client: &::registry::RegistryClient,
     admin: &Address,
-) -> (u64, Address, Address) {
+) -> (u64, Address, Address, TokenClient<'_>) {
     let finder = Address::generate(env);
     let artisan = Address::generate(env);
 
@@ -2175,7 +2175,7 @@ fn create_disputed_job(
     market_client.start_job(&artisan, &job_id);
     market_client.raise_dispute(&finder, &job_id);
 
-    (job_id, finder, artisan)
+    (job_id, finder, artisan, token_client)
 }
 
 #[test]
@@ -2187,7 +2187,7 @@ fn test_assign_juror_success() {
     let (market_id, market_client, registry_id, registry_client) =
         setup_market_and_registry(&env, admin.clone());
 
-    let (job_id, _finder, _artisan) =
+    let (job_id, _finder, _artisan, _token_client) =
         create_disputed_job(&env, &market_client, &registry_id, &registry_client, &admin);
 
     let juror = Address::generate(&env);
@@ -2213,7 +2213,7 @@ fn test_assign_juror_emits_event() {
     let (_market_id, market_client, registry_id, registry_client) =
         setup_market_and_registry(&env, admin.clone());
 
-    let (job_id, _finder, _artisan) =
+    let (job_id, _finder, _artisan, _token_client) =
         create_disputed_job(&env, &market_client, &registry_id, &registry_client, &admin);
 
     let juror = Address::generate(&env);
@@ -2236,7 +2236,7 @@ fn test_assign_juror_non_admin() {
     let (_market_id, market_client, registry_id, registry_client) =
         setup_market_and_registry(&env, admin.clone());
 
-    let (job_id, _finder, _artisan) =
+    let (job_id, _finder, _artisan, _token_client) =
         create_disputed_job(&env, &market_client, &registry_id, &registry_client, &admin);
 
     let juror = Address::generate(&env);
@@ -2298,13 +2298,342 @@ fn test_assign_juror_not_curator() {
     let (_market_id, market_client, registry_id, registry_client) =
         setup_market_and_registry(&env, admin.clone());
 
-    let (job_id, _finder, _artisan) =
+    let (job_id, _finder, _artisan, _token_client) =
         create_disputed_job(&env, &market_client, &registry_id, &registry_client, &admin);
 
     let juror = Address::generate(&env);
     seed_artisan_profile(&env, &registry_id, &juror, 3); // Artisan role, not Curator
 
     market_client.assign_juror(&admin, &job_id, &juror);
+}
+
+// ── resolve_dispute tests ────────────────────────────────────────────────────
+
+fn create_disputed_job_with_juror(
+    env: &Env,
+    market_client: &MarketContractClient,
+    registry_id: &Address,
+    registry_client: &::registry::RegistryClient,
+    admin: &Address,
+) -> (u64, Address, Address, Address, TokenClient<'_>) {
+    let (job_id, finder, artisan, token_client) =
+        create_disputed_job(env, market_client, registry_id, registry_client, admin);
+
+    let juror = Address::generate(env);
+    seed_artisan_profile(env, registry_id, &juror, 1); // Curator role
+    market_client.assign_juror(admin, &job_id, &juror);
+
+    (job_id, finder, artisan, juror, token_client)
+}
+
+fn find_dispute_resolved_event(env: &Env, market_id: &Address, job_id: u64) -> DisputeResolved {
+    let events = env.events().all();
+    for event in events.iter() {
+        if event.0 == *market_id {
+            if let Ok(data) = event.2.try_into_val::<DisputeResolved>(env) {
+                if data.id == job_id {
+                    return data;
+                }
+            }
+        }
+    }
+    panic!("DisputeResolved event not found for job {job_id}");
+}
+
+#[test]
+fn test_resolve_dispute_success_pays_shares_and_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    // Job amount 500 with the default 100 bps fee => fee = 5.
+    // Payout invariant: finder_share + artisan_share + fee == job.amount.
+    let (job_id, finder, artisan, juror, token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    market_client.resolve_dispute(&juror, &job_id, &300, &195);
+
+    // finder deposited 500 and gets 300 back; artisan gets 195; admin gets the 5 fee
+    assert_eq!(token_client.balance(&finder), 800);
+    assert_eq!(token_client.balance(&artisan), 195);
+    assert_eq!(token_client.balance(&admin), 5);
+    assert_eq!(token_client.balance(&market_id), 0);
+
+    // final job state: resolved dispute settles as Completed, juror preserved
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.status, JobStatus::Completed);
+    assert_eq!(job.juror, Some(juror));
+
+    // the dispute-resolution event carries the awarded shares
+    let resolved = find_dispute_resolved_event(&env, &market_id, job_id);
+    assert_eq!(resolved.finder_share, 300);
+    assert_eq!(resolved.artisan_share, 195);
+}
+
+#[test]
+fn test_resolve_dispute_payout_math_500_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, finder, artisan, juror, token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    // 500 bps on 500 => fee = 25, so the shares must sum to 475
+    market_client.set_platform_fee(&admin, &500);
+    market_client.resolve_dispute(&juror, &job_id, &300, &175);
+
+    assert_eq!(token_client.balance(&finder), 800);
+    assert_eq!(token_client.balance(&artisan), 175);
+    assert_eq!(token_client.balance(&admin), 25);
+    assert_eq!(token_client.balance(&market_id), 0);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.status, JobStatus::Completed);
+}
+
+#[test]
+fn test_resolve_dispute_zero_finder_share() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, finder, artisan, juror, token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    // Everything (minus the fee) goes to the artisan; finder gets nothing back
+    market_client.resolve_dispute(&juror, &job_id, &0, &495);
+
+    assert_eq!(token_client.balance(&finder), 500); // deposited 500, nothing returned
+    assert_eq!(token_client.balance(&artisan), 495);
+    assert_eq!(token_client.balance(&admin), 5);
+    assert_eq!(token_client.balance(&market_id), 0);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.status, JobStatus::Completed);
+}
+
+#[test]
+fn test_resolve_dispute_zero_artisan_share() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, finder, artisan, juror, token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    // Finder keeps everything (minus the fee); the artisan gets nothing
+    market_client.resolve_dispute(&juror, &job_id, &495, &0);
+
+    assert_eq!(token_client.balance(&finder), 995);
+    assert_eq!(token_client.balance(&artisan), 0);
+    assert_eq!(token_client.balance(&admin), 5);
+    assert_eq!(token_client.balance(&market_id), 0);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.status, JobStatus::Completed);
+}
+
+#[test]
+fn test_resolve_dispute_zero_fee_branch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, finder, artisan, juror, token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    // With a 0 bps fee, fee == 0 so no transfer to the admin is executed
+    market_client.set_platform_fee(&admin, &0);
+    market_client.resolve_dispute(&juror, &job_id, &300, &200);
+
+    assert_eq!(token_client.balance(&finder), 800);
+    assert_eq!(token_client.balance(&artisan), 200);
+    assert_eq!(token_client.balance(&admin), 0);
+    assert_eq!(token_client.balance(&market_id), 0);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(job.status, JobStatus::Completed);
+}
+
+#[test]
+#[should_panic(expected = "Invalid shares")]
+fn test_resolve_dispute_invalid_shares_overpay() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, _finder, _artisan, juror, _token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    // 300 + 200 + 5 fee = 505, which exceeds the escrowed 500
+    market_client.resolve_dispute(&juror, &job_id, &300, &200);
+}
+
+#[test]
+#[should_panic(expected = "Invalid shares")]
+fn test_resolve_dispute_invalid_shares_underpay() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, _finder, _artisan, juror, _token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    // 200 + 200 + 5 fee = 405, which leaves escrow under-distributed
+    market_client.resolve_dispute(&juror, &job_id, &200, &200);
+}
+
+#[test]
+#[should_panic(expected = "Not assigned juror")]
+fn test_resolve_dispute_unauthorized_juror() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, _finder, _artisan, _juror, _token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    // A different curator is not the assigned juror
+    let impostor = Address::generate(&env);
+    seed_artisan_profile(&env, &registry_id, &impostor, 1); // Curator role
+
+    market_client.resolve_dispute(&impostor, &job_id, &300, &195);
+}
+
+#[test]
+#[should_panic(expected = "Not assigned juror")]
+fn test_resolve_dispute_finder_cannot_resolve() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    // Even the finder cannot resolve the dispute; only the assigned juror can
+    let (job_id, finder, _artisan, _juror, _token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    market_client.resolve_dispute(&finder, &job_id, &300, &195);
+}
+
+#[test]
+#[should_panic(expected = "Job is not disputed")]
+fn test_resolve_dispute_job_not_disputed() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    registry_client.initialize(&admin);
+
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    // Job is InProgress, never disputed
+    let job_id = market_client.create_job(&finder, &token_client.address, &500);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    let juror = Address::generate(&env);
+    market_client.resolve_dispute(&juror, &job_id, &300, &195);
+}
+
+#[test]
+#[should_panic(expected = "Job not found")]
+fn test_resolve_dispute_job_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, _registry_id, _registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let juror = Address::generate(&env);
+    market_client.resolve_dispute(&juror, &999, &300, &195);
+}
+
+#[test]
+#[should_panic(expected = "Job is not disputed")]
+fn test_resolve_dispute_cannot_resolve_twice() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+
+    let (job_id, _finder, _artisan, juror, _token_client) = create_disputed_job_with_juror(
+        &env, &market_client, &registry_id, &registry_client, &admin,
+    );
+
+    market_client.resolve_dispute(&juror, &job_id, &300, &195); // succeeds
+    // the job is already Completed, so a second resolution must be rejected
+    market_client.resolve_dispute(&juror, &job_id, &300, &195);
 }
 
 #[test]
