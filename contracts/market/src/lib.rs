@@ -1155,6 +1155,7 @@ impl MarketContract {
             .get(&DataKey::PlatformFee)
             .unwrap_or(100);
         let fee = (job.amount * (fee_bps as i128)) / 10000;
+        assert!(finder_share >= 0 && artisan_share >= 0, "Invalid shares");
         assert!(
             finder_share + artisan_share + fee == job.amount,
             "Invalid shares"
