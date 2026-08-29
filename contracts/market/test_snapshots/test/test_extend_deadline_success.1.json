@@ -66,6 +66,9 @@
                 },
                 {
                   "i128": "500"
+                },
+                {
+                  "u64": "0"
                 }
               ]
             }
@@ -281,7 +284,7 @@
                         "symbol": "deadline"
                       },
                       "val": {
-                        "u64": "259200"
+                        "u64": "2851200"
                       }
                     },
                     {
@@ -347,6 +350,14 @@
                       "val": {
                         "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "total_extended"
+                      },
+                      "val": {
+                        "u64": "259200"
+                      }
                     }
                   ]
                 }
@@ -396,6 +407,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "DefaultDeadline"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "2592000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "IsPaused"
                             }
                           ]
@@ -414,6 +437,30 @@
                         },
                         "val": {
                           "u64": "1"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "MaxCumulativeExtension"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "7776000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "MaxSingleExtension"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "2592000"
                         }
                       },
                       {
@@ -847,7 +894,7 @@
                     "symbol": "new_deadline"
                   },
                   "val": {
-                    "u64": "259200"
+                    "u64": "2851200"
                   }
                 }
               ]

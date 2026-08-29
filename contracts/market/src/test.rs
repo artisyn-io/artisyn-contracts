@@ -1052,7 +1052,8 @@ fn test_raise_dispute_success_from_in_progress_by_finder() {
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
-    market_client.raise_dispute(&finder, &job_id);
+    let reason = String::from_str(&env, "Work quality does not meet requirements");
+    market_client.raise_dispute(&finder, &job_id, &reason);
 
     let events = env.events().all();
     let market_event_count = events.iter().filter(|e| e.0 == market_id).count();
@@ -1090,7 +1091,8 @@ fn test_raise_dispute_success_from_pending_review_by_artisan() {
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
 
-    market_client.raise_dispute(&artisan, &job_id);
+    let reason = String::from_str(&env, "Payment not received as agreed");
+    market_client.raise_dispute(&artisan, &job_id, &reason);
 
     let events = env.events().all();
     let market_event_count = events.iter().filter(|e| e.0 == market_id).count();
@@ -1129,7 +1131,8 @@ fn test_raise_dispute_unauthorized_user() {
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
-    market_client.raise_dispute(&random_user, &job_id);
+    let reason = String::from_str(&env, "Random dispute");
+    market_client.raise_dispute(&random_user, &job_id, &reason);
 }
 
 #[test]
@@ -1154,7 +1157,114 @@ fn test_raise_dispute_wrong_status() {
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
-    market_client.raise_dispute(&finder, &job_id);
+    let reason = String::from_str(&env, "Wrong status test");
+    market_client.raise_dispute(&finder, &job_id, &reason);
+}
+
+#[test]
+fn test_raise_dispute_stores_reason_from_finder() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    let expected_reason = String::from_str(&env, "Deliverable does not match specifications");
+    market_client.raise_dispute(&finder, &job_id, &expected_reason);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+
+    assert_eq!(job.status, JobStatus::Disputed);
+    assert!(job.dispute_reason.is_some());
+    assert_eq!(job.dispute_reason.unwrap(), expected_reason);
+}
+
+#[test]
+fn test_raise_dispute_stores_reason_from_artisan() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+    market_client.complete_job(&artisan, &job_id);
+
+    let expected_reason = String::from_str(&env, "Finder refusing to pay agreed amount");
+    market_client.raise_dispute(&artisan, &job_id, &expected_reason);
+
+    let job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+
+    assert_eq!(job.status, JobStatus::Disputed);
+    assert!(job.dispute_reason.is_some());
+    assert_eq!(job.dispute_reason.unwrap(), expected_reason);
+}
+
+#[test]
+fn test_raise_dispute_event_contains_reason() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.assign_artisan(&finder, &job_id, &artisan);
+    market_client.start_job(&artisan, &job_id);
+
+    let expected_reason = String::from_str(&env, "Scope creep without compensation");
+    market_client.raise_dispute(&finder, &job_id, &expected_reason);
+
+    let events = env.events().all();
+    let dispute_event_count = events.iter().filter(|e| e.0 == market_id).count();
+
+    assert!(dispute_event_count > 0);
 }
 
 fn create_job_in_pending_review(
@@ -2175,7 +2285,9 @@ fn create_disputed_job(
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
-    market_client.raise_dispute(&finder, &job_id);
+
+    let reason = String::from_str(env, "Disputed job for testing");
+    market_client.raise_dispute(&finder, &job_id, &reason);
 
     (job_id, finder, artisan)
 }
@@ -3367,7 +3479,8 @@ fn test_fee_accounting_reconciles_across_all_payout_paths() {
     let job_c = market_client.create_job(&finder_c, &token_client.address, &400, &0);
     market_client.assign_artisan(&finder_c, &job_c, &artisan_c);
     market_client.start_job(&artisan_c, &job_c);
-    market_client.raise_dispute(&finder_c, &job_c);
+    let reason_c = String::from_str(&env, "Quality issue requiring juror review");
+    market_client.raise_dispute(&finder_c, &job_c, &reason_c);
     market_client.assign_juror(&admin, &job_c, &juror);
     market_client.resolve_dispute(&juror, &job_c, &200, &196);
 

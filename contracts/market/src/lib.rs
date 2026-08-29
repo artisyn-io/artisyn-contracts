@@ -141,6 +141,7 @@ pub struct FundsReleased {
 pub struct DisputeRaised {
     pub id: u64,
     pub raised_by: Address,
+    pub reason: String,
 }
 
 #[contractevent]
@@ -717,7 +718,7 @@ impl MarketContract {
         .publish(&env);
     }
 
-    pub fn raise_dispute(env: Env, caller: Address, job_id: u64) {
+    pub fn raise_dispute(env: Env, caller: Address, job_id: u64, reason: String) {
         caller.require_auth();
 
         let mut job: Job = env
@@ -735,6 +736,7 @@ impl MarketContract {
         }
 
         job.status = JobStatus::Disputed;
+        job.dispute_reason = Some(reason.clone());
         env.storage().persistent().set(&DataKey::Job(job_id), &job);
         env.storage()
             .persistent()
@@ -743,6 +745,7 @@ impl MarketContract {
         DisputeRaised {
             id: job_id,
             raised_by: caller,
+            reason,
         }
         .publish(&env);
     }
