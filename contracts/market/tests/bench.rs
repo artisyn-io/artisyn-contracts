@@ -195,7 +195,7 @@ fn bench_create_job() {
 
 /// Profiles the resource footprint of a single `confirm_delivery` invocation.
 ///
-/// All prerequisite state (create_job → assign_artisan → start_job →
+/// All prerequisite state (create_job → apply_for_job → assign_artisan → start_job →
 /// complete_job) is set up before the measurement so that only
 /// `confirm_delivery` itself is metered.
 #[test]
@@ -216,6 +216,7 @@ fn bench_confirm_delivery() {
     // Build pre-conditions. Each call resets the invocation meter, so these
     // are NOT included in the measurement below.
     let job_id = market_client.create_job(&finder, &token_client.address, &500_000, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
