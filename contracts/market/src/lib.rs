@@ -354,6 +354,11 @@ impl MarketContract {
             panic!("User is blacklisted");
         }
 
+        let application_key = DataKey::Application(job_id, artisan.clone());
+        if !env.storage().persistent().has(&application_key) {
+            panic!("Artisan has not applied for this job");
+        }
+
         job.artisan = Some(artisan.clone());
         job.status = JobStatus::Assigned;
 

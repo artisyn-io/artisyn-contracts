@@ -89,12 +89,40 @@ fn test_assign_artisan_success() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
 
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
-    let events = env.events().all();
-    let market_event_count = events.iter().filter(|e| e.0 == market_id).count();
-    assert!(market_event_count >= 1);
+    assert!(market_client.get_application(&job_id, &artisan).is_some());
+    let assigned_job: Job = env.as_contract(&market_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    });
+    assert_eq!(assigned_job.status, JobStatus::Assigned);
+    assert_eq!(assigned_job.artisan, Some(artisan));
+}
+
+#[test]
+#[should_panic(expected = "Artisan has not applied for this job")]
+fn test_assign_artisan_rejects_artisan_without_application() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let (_market_id, market_client, registry_id, registry_client) =
+        setup_market_and_registry(&env, admin.clone());
+    let finder = Address::generate(&env);
+    let artisan = Address::generate(&env);
+
+    registry_client.initialize(&admin);
+    seed_artisan_profile(&env, &registry_id, &artisan, 3);
+
+    let (token_client, token_admin_client) = create_token(&env, &admin);
+    token_admin_client.mint(&finder, &1000);
+    let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+
+    market_client.assign_artisan(&finder, &job_id, &artisan);
 }
 
 #[test]
@@ -116,6 +144,7 @@ fn test_reopen_assignment_just_before_timeout() {
     let assigned_at = 1_000;
     env.ledger().with_mut(|li| li.timestamp = assigned_at);
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     env.ledger()
@@ -143,6 +172,7 @@ fn test_reopen_assignment_after_timeout_preserves_escrow_and_allows_reassignment
     let assigned_at = 1_000;
     env.ledger().with_mut(|li| li.timestamp = assigned_at);
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&first_artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &first_artisan);
 
     env.ledger()
@@ -161,6 +191,7 @@ fn test_reopen_assignment_after_timeout_preserves_escrow_and_allows_reassignment
     assert_eq!(token_client.balance(&market_id), 500);
     assert_eq!(token_client.balance(&finder), 500);
 
+    market_client.apply_for_job(&second_artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &second_artisan);
     let reassigned_job: Job = env.as_contract(&market_id, || {
         env.storage()
@@ -194,6 +225,7 @@ fn test_reassign_artisan_after_timeout_preserves_escrow_and_applications() {
     env.ledger().with_mut(|li| li.timestamp = assigned_at);
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
     market_client.apply_for_job(&new_artisan, &job_id);
+    market_client.apply_for_job(&previous_artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &previous_artisan);
 
     env.ledger()
@@ -230,6 +262,7 @@ fn test_reassign_artisan_before_timeout_is_blocked() {
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&previous_artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &previous_artisan);
 
     env.ledger()
@@ -255,6 +288,7 @@ fn test_reassign_artisan_after_job_started_is_blocked() {
     let (token_client, token_admin_client) = create_token(&env, &admin);
     token_admin_client.mint(&finder, &1000);
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&previous_artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &previous_artisan);
     market_client.start_job(&previous_artisan, &job_id);
 
@@ -298,6 +332,7 @@ fn test_assign_artisan_job_not_open() {
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     let artisan2 = Address::generate(&env);
@@ -469,6 +504,7 @@ fn test_apply_for_job_not_open() {
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     let artisan2 = Address::generate(&env);
@@ -614,6 +650,7 @@ fn test_start_job_success() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     market_client.start_job(&artisan, &job_id);
@@ -659,6 +696,7 @@ fn test_start_job_not_assigned() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     market_client.start_job(&wrong_artisan, &job_id);
@@ -710,6 +748,7 @@ fn test_start_job_already_started() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -797,6 +836,7 @@ fn test_cancel_job_already_assigned() {
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
 
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     market_client.cancel_job(&finder, &job_id);
@@ -820,6 +860,7 @@ fn test_cancel_job_already_in_progress() {
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
 
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -845,6 +886,7 @@ fn test_complete_job_success() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -889,6 +931,7 @@ fn test_complete_job_not_assigned() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -915,6 +958,7 @@ fn test_complete_job_wrong_status() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     // Job is assigned, but not started yet
@@ -940,6 +984,7 @@ fn test_confirm_delivery_success() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -998,6 +1043,7 @@ fn test_confirm_delivery_not_finder() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -1025,6 +1071,7 @@ fn test_confirm_delivery_wrong_status() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     market_client.confirm_delivery(&finder, &job_id);
@@ -1049,6 +1096,7 @@ fn test_raise_dispute_success_from_in_progress_by_finder() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -1087,6 +1135,7 @@ fn test_raise_dispute_success_from_pending_review_by_artisan() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -1128,6 +1177,7 @@ fn test_raise_dispute_unauthorized_user() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -1155,6 +1205,7 @@ fn test_raise_dispute_wrong_status() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     let reason = String::from_str(&env, "Wrong status test");
@@ -1180,6 +1231,7 @@ fn test_raise_dispute_stores_reason_from_finder() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -1217,6 +1269,7 @@ fn test_raise_dispute_stores_reason_from_artisan() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -1255,6 +1308,7 @@ fn test_raise_dispute_event_contains_reason() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -2283,6 +2337,7 @@ fn create_disputed_job(
     seed_artisan_profile(env, registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -2379,6 +2434,7 @@ fn test_assign_juror_job_not_disputed() {
 
     // Job is InProgress, not Disputed
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -2644,6 +2700,7 @@ fn test_fee_math_500_bps() {
     market_client.set_platform_fee(&admin, &500);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &1000, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -2695,6 +2752,7 @@ fn test_circuit_breaker_full_flow() {
     // Step 5: Verify normal operations work again after unpause
     let job_id_2 = market_client.create_job(&finder, &token_client.address, &400, &0);
     assert_eq!(token_client.balance(&market_id), 400);
+    market_client.apply_for_job(&artisan, &job_id_2);
     market_client.assign_artisan(&finder, &job_id_2, &artisan);
 }
 
@@ -2736,6 +2794,7 @@ fn test_circuit_breaker_confirm_delivery_blocked_during_pause() {
     token_admin_client.mint(&finder, &1000);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -2794,6 +2853,7 @@ fn test_circuit_breaker_unpause_restores_operations() {
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
     assert_eq!(token_client.balance(&market_id), 500);
 
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -2863,6 +2923,7 @@ fn test_auto_release_time_travel_full_flow() {
 
     // REQUIREMENT 1: Finish a job
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -2925,6 +2986,7 @@ fn test_auto_release_time_travel_immediate_attempt_fails() {
     token_admin_client.mint(&finder, &1000);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -2959,6 +3021,7 @@ fn test_auto_release_time_travel_six_days_fails() {
     token_admin_client.mint(&finder, &1000);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -2997,6 +3060,7 @@ fn test_auto_release_time_travel_exactly_7_days_succeeds() {
     token_admin_client.mint(&finder, &1000);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -3039,6 +3103,7 @@ fn test_auto_release_time_travel_exactly_8_days_succeeds() {
     token_admin_client.mint(&finder, &1000);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -3084,6 +3149,7 @@ fn test_auto_release_time_travel_exactly_7_days_minus_one_fails() {
     token_admin_client.mint(&finder, &1000);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
 
@@ -3163,6 +3229,7 @@ fn test_e2e_cross_contract_full_user_journey() {
     assert!(profile.is_verified);
 
     // Step 4: Successfully assign Artisan in Market
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     // Verify job was assigned
@@ -3262,6 +3329,7 @@ fn test_e2e_cross_contract_curator_workflow() {
 
     // Verify artisan can be assigned in Market
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
 
     let job: Job = env.as_contract(&market_id, || {
@@ -3544,6 +3612,7 @@ fn test_confirm_delivery_records_fee_and_emits_event() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -3578,6 +3647,7 @@ fn test_auto_release_funds_records_fee() {
     seed_artisan_profile(&env, &registry_id, &artisan, 3);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
@@ -3664,6 +3734,7 @@ fn test_fee_accounting_reconciles_across_all_payout_paths() {
 
     // Job A: standard completion via confirm_delivery. 1% of 500 => 5.
     let job_a = market_client.create_job(&finder_a, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan_a, &job_a);
     market_client.assign_artisan(&finder_a, &job_a, &artisan_a);
     market_client.start_job(&artisan_a, &job_a);
     market_client.complete_job(&artisan_a, &job_a);
@@ -3671,12 +3742,14 @@ fn test_fee_accounting_reconciles_across_all_payout_paths() {
 
     // Job B: auto-release after the finder review window lapses. 1% of 300 => 3.
     let job_b = market_client.create_job(&finder_b, &token_client.address, &300, &0);
+    market_client.apply_for_job(&artisan_b, &job_b);
     market_client.assign_artisan(&finder_b, &job_b, &artisan_b);
     market_client.start_job(&artisan_b, &job_b);
     market_client.complete_job(&artisan_b, &job_b);
 
     // Job C: disputed and resolved by a juror. 1% of 400 => 4.
     let job_c = market_client.create_job(&finder_c, &token_client.address, &400, &0);
+    market_client.apply_for_job(&artisan_c, &job_c);
     market_client.assign_artisan(&finder_c, &job_c, &artisan_c);
     market_client.start_job(&artisan_c, &job_c);
     let reason_c = String::from_str(&env, "Quality issue requiring juror review");
@@ -3714,6 +3787,7 @@ fn test_zero_fee_is_not_recorded_or_transferred() {
     market_client.set_platform_fee(&admin, &0);
 
     let job_id = market_client.create_job(&finder, &token_client.address, &500, &0);
+    market_client.apply_for_job(&artisan, &job_id);
     market_client.assign_artisan(&finder, &job_id, &artisan);
     market_client.start_job(&artisan, &job_id);
     market_client.complete_job(&artisan, &job_id);
