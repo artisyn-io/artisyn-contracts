@@ -241,6 +241,51 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "CollectedFees"
+                },
+                {
+                  "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "CollectedFees"
+                    },
+                    {
+                      "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "i128": "5"
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          500000
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
                   "symbol": "Job"
                 },
                 {
@@ -292,7 +337,7 @@
                         "symbol": "deadline"
                       },
                       "val": {
-                        "u64": "0"
+                        "u64": "2592000"
                       }
                     },
                     {
@@ -358,6 +403,14 @@
                       "val": {
                         "address": "CDLDVFKHEZ2RVB3NG4UQA4VPD3TSHV6XMHXMHP2BSGCJ2IIWVTOHGDSG"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "total_extended"
+                      },
+                      "val": {
+                        "u64": "0"
+                      }
                     }
                   ]
                 }
@@ -407,6 +460,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "DefaultDeadline"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "2592000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "IsPaused"
                             }
                           ]
@@ -425,6 +490,30 @@
                         },
                         "val": {
                           "u64": "1"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "MaxCumulativeExtension"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "7776000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "MaxSingleExtension"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "2592000"
                         }
                       },
                       {

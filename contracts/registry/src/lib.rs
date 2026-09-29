@@ -17,10 +17,19 @@ pub struct Profile {
     pub is_blacklisted: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum VerificationStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
     Profile(Address),
+    VerificationApplication(Address),
     Admin,
 }
 
@@ -54,6 +63,26 @@ pub struct UserVerified {
 pub struct ApplicationReceived {
     #[topic]
     pub user_address: Address,
+    pub status: VerificationStatus,
+}
+
+#[contractevent]
+pub struct ApplicationRejected {
+    #[topic]
+    pub user_address: Address,
+    pub status: VerificationStatus,
+}
+
+#[contractevent]
+pub struct UserBlacklisted {
+    #[topic]
+    pub user: Address,
+}
+
+#[contractevent]
+pub struct UserUnblacklisted {
+    #[topic]
+    pub user: Address,
 }
 
 #[contractevent]
@@ -84,6 +113,25 @@ fn read_profile(env: &Env, user: &Address) -> Option<Profile> {
 fn write_profile(env: &Env, user: &Address, profile: &Profile) {
     let key = DataKey::Profile(user.clone());
     env.storage().persistent().set(&key, profile);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, 100_000, 500_000);
+}
+
+fn read_verification_status(env: &Env, user: &Address) -> Option<VerificationStatus> {
+    let key = DataKey::VerificationApplication(user.clone());
+    let status = env.storage().persistent().get(&key);
+    if status.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, 100_000, 500_000);
+    }
+    status
+}
+
+fn write_verification_status(env: &Env, user: &Address, status: &VerificationStatus) {
+    let key = DataKey::VerificationApplication(user.clone());
+    env.storage().persistent().set(&key, status);
     env.storage()
         .persistent()
         .extend_ttl(&key, 100_000, 500_000);
@@ -211,10 +259,31 @@ impl Registry {
             panic!("Metadata hash is missing");
         }
 
+        // A rejected applicant may re-apply; pending and approved records stay authoritative.
+        match read_verification_status(&env, &caller) {
+            Some(VerificationStatus::Pending) => panic!("Verification application already pending"),
+            Some(VerificationStatus::Approved) => panic!("User is already verified"),
+            Some(VerificationStatus::Rejected) | None => {}
+        }
+
+        write_verification_status(&env, &caller, &VerificationStatus::Pending);
+
         ApplicationReceived {
             user_address: caller,
+            status: VerificationStatus::Pending,
         }
         .publish(&env);
+    }
+
+    pub fn get_verification_status(env: Env, user: Address) -> VerificationStatus {
+        match read_verification_status(&env, &user) {
+            Some(status) => status,
+            None => panic!("Verification application not found"),
+        }
+    }
+
+    pub fn has_verification_application(env: Env, user: Address) -> bool {
+        read_verification_status(&env, &user).is_some()
     }
 
     pub fn approve_artisan(env: Env, caller: Address, artisan: Address) {
@@ -234,11 +303,97 @@ impl Registry {
             None => panic!("User not found"),
         };
 
+        let application_status = match read_verification_status(&env, &artisan) {
+            Some(status) => status,
+            None => panic!("Verification application is not pending"),
+        };
+
+        if application_status != VerificationStatus::Pending {
+            panic!("Verification application is not pending");
+        }
+
         artisan_profile.role = ROLE_ARTISAN;
         artisan_profile.is_verified = true;
         write_profile(&env, &artisan, &artisan_profile);
+        write_verification_status(&env, &artisan, &VerificationStatus::Approved);
 
         UserVerified { artisan }.publish(&env);
+    }
+
+    pub fn reject_artisan(env: Env, caller: Address, artisan: Address) {
+        caller.require_auth();
+
+        let caller_profile = match read_profile(&env, &caller) {
+            Some(p) => p,
+            None => panic!("Caller not registered"),
+        };
+
+        if caller_profile.role != ROLE_CURATOR && caller_profile.role != ROLE_ADMIN {
+            panic!("Caller must be Curator or Admin");
+        }
+
+        if read_profile(&env, &artisan).is_none() {
+            panic!("User not found");
+        }
+
+        let application_status = match read_verification_status(&env, &artisan) {
+            Some(status) => status,
+            None => panic!("Verification application is not pending"),
+        };
+
+        if application_status != VerificationStatus::Pending {
+            panic!("Verification application is not pending");
+        }
+
+        write_verification_status(&env, &artisan, &VerificationStatus::Rejected);
+
+        ApplicationRejected {
+            user_address: artisan,
+            status: VerificationStatus::Rejected,
+        }
+        .publish(&env);
+    }
+
+    pub fn blacklist_user(env: Env, admin: Address, user: Address) {
+        admin.require_auth();
+
+        let current_admin = read_admin(&env).expect("Contract not initialized");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        let mut profile = match read_profile(&env, &user) {
+            Some(p) => p,
+            None => panic!("User not found"),
+        };
+
+        if profile.is_blacklisted {
+            panic!("User is already blacklisted");
+        }
+
+        profile.is_blacklisted = true;
+        write_profile(&env, &user, &profile);
+
+        UserBlacklisted { user }.publish(&env);
+    }
+
+    pub fn unblacklist_user(env: Env, admin: Address, user: Address) {
+        admin.require_auth();
+
+        let current_admin = read_admin(&env).expect("Contract not initialized");
+        assert!(admin == current_admin, "Unauthorized caller");
+
+        let mut profile = match read_profile(&env, &user) {
+            Some(p) => p,
+            None => panic!("User not found"),
+        };
+
+        if !profile.is_blacklisted {
+            panic!("User is not blacklisted");
+        }
+
+        profile.is_blacklisted = false;
+        write_profile(&env, &user, &profile);
+
+        UserUnblacklisted { user }.publish(&env);
     }
 
     pub fn transfer_admin(env: Env, old_admin: Address, new_admin: Address) {

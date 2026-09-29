@@ -59,12 +59,48 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "DefaultDeadline"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "2592000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "IsPaused"
                             }
                           ]
                         },
                         "val": {
                           "bool": false
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "MaxCumulativeExtension"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "7776000"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "MaxSingleExtension"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": "2592000"
                         }
                       },
                       {
