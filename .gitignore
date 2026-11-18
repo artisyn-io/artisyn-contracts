@@ -5,6 +5,7 @@ target
 .soroban
 .stellar
 
-.vscode
 **/*/test_snapshots
 wave-*.md
+config.bat
+node_modules
